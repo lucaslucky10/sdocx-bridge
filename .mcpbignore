@@ -17,3 +17,4 @@ src/handwriting_engine/math/node_modules/
 glyphs.json
 start.cmd
 .uv-cache/
+.uv-python/

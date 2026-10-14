@@ -17,3 +17,4 @@ glyphs.json
 local-*.json
 /src/math/
 .uv-cache/
+.uv-python/
