@@ -36,4 +36,4 @@ jobs:
         run: |
           npx -y @anthropic-ai/mcpb@2.1.2 pack . sdocx-bridge.mcpb
           mkdir ext && cd ext && unzip -q ../sdocx-bridge.mcpb
-          uv run --directory . --extra audio --quiet sdocx-bridge --library ../lib mcp --help
+          node server/launch.js --library ../lib mcp --help

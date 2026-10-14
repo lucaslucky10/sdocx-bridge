@@ -5,3 +5,4 @@ recursive-include src/sdocx_bridge/static *.html *.js *.css
 include src/handwriting_engine/math/*.js src/handwriting_engine/math/package.json src/handwriting_engine/math/pnpm-lock.yaml
 prune src/handwriting_engine/math/node_modules
 global-exclude *.pyc
+include server/launch.js

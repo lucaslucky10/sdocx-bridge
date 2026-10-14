@@ -1,4 +1,6 @@
-# Validation — v0.2.3 (2026-10-14)
+# Validation — v0.2.4 (2026-10-14)
+
+v0.2.4: Claude Desktop itself also runs uv at install time for "uv" extensions and failed the same way, so the extension now uses type "node" (Claude's built-in Node.js) with a small launcher, `server/launch.js`, that runs uv with everything in `~/.inkbridge`. Tested by packing, unpacking and driving it with an MCP client in the container.
 
 v0.2.3: on the owner's PC even renaming a folder inside the extension directory failed with os error 17 (likely Windows app-data virtualization for the Claude Desktop package). uv's Python, cache and virtual environment now live in `%USERPROFILE%\.inkbridge` instead. Windows retry pending.
 
