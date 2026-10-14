@@ -5,6 +5,7 @@ permissions:
 jobs:
   tests:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
         python: ['3.11', '3.13']
@@ -18,6 +19,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: npm install --prefix src/handwriting_engine/math --ignore-scripts
+      - run: npm install --ignore-scripts --package-lock=false
+        working-directory: src/handwriting_engine/math
       - run: python -m pytest -q
       - run: python -m build

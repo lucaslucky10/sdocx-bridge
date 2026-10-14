@@ -56,7 +56,9 @@ sdocx-bridge --library ./library write "내 손글씨로 쓰는 문장" --seed 7
 Node.js 18 이상과 npm 또는 pnpm이 필요합니다. **저장소 설치** 기준:
 
 ```powershell
-npm install --prefix src/handwriting_engine/math --ignore-scripts
+cd src/handwriting_engine/math
+npm install --ignore-scripts --package-lock=false
+cd ../../..
 sdocx-bridge --library ./library write '회전운동 $\sum \tau = I\alpha$'
 ```
 
