@@ -1,4 +1,8 @@
-# Validation — v0.2.0 (2026-10-14)
+# Validation — v0.2.1 (2026-10-14)
+
+v0.2.1 fixes the first real Claude Desktop install on Windows (owner's PC): uv inspected a system Python 3.14 and failed to write its cache (`os error 17`, cross-drive move). The extension now runs uv with `--python-preference only-managed`, its own cache folder inside the extension and `--link-mode copy`. Re-tested in the container only; the Windows retry is pending.
+
+## v0.2.0
 
 Checks for this release were run in a Linux container (4 CPU cores, Python 3.12). Windows was **not** run for this release; the GitHub Actions Windows jobs are the only Windows evidence. Private notes, recordings and the glyph dictionary are not in this repository.
 

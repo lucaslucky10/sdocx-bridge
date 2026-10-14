@@ -16,3 +16,4 @@ src/handwriting_engine/math/node_modules/
 *.m4a
 glyphs.json
 start.cmd
+.uv-cache/
