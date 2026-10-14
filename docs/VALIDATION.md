@@ -1,3 +1,5 @@
+> 0.2.6: 0.2.5는 일부 Windows에서 프로그램 복사(fs.cpSync → CopyFile2)가 EPERM/UNKNOWN으로 실패했습니다(사용자 launch.log로 확인). 파일을 하나씩 읽고 써서 복사하고, 임시 폴더에 다 채운 뒤 이름을 바꿉니다. Linux에서 확장을 풀어 MCP 클라이언트로 실행(도구 18개, 손글씨 사전 확인)하고 확장 폴더가 바뀌지 않는 것을 확인했습니다. Windows 실기기는 미확인.
+
 # Validation — v0.2.5 (2026-10-14)
 
 v0.2.5: building the package also renames files next to the sources, which failed inside the extension folder; the launcher now copies the program to `~/.inkbridge/app-<version>` and runs from there, and writes `~/.inkbridge/launch.log`. Checked that the unpacked extension folder is left unchanged.

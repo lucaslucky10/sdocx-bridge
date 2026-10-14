@@ -9,6 +9,7 @@ const path = require("path");
 
 const home = os.homedir();
 const base = path.join(home, ".inkbridge");
+const exe = process.platform === "win32" ? "uv.exe" : "uv";
 const source = path.resolve(__dirname, "..");
 const logFile = path.join(base, "launch.log");
 fs.mkdirSync(base, { recursive: true });
@@ -21,23 +22,42 @@ function log(msg) {
 // Building the package writes temporary files next to the sources, and file renames
 // inside Claude's app-data folder fail on some Windows installs (os error 17).
 // So run from a copy of the sources in ~/.inkbridge/app-<version>.
+// fs.copyFile/cpSync fail here (EPERM/UNKNOWN from Windows CopyFile2), so copy by
+// reading and writing each file.
+function copyTree(from, to) {
+  if (fs.statSync(from).isDirectory()) {
+    fs.mkdirSync(to, { recursive: true });
+    for (const name of fs.readdirSync(from)) {
+      if (name === "__pycache__" || name.endsWith(".egg-info")) continue;
+      copyTree(path.join(from, name), path.join(to, name));
+    }
+  } else {
+    fs.writeFileSync(to, fs.readFileSync(from));
+  }
+}
+
 function prepareProject() {
   const version = JSON.parse(fs.readFileSync(path.join(source, "manifest.json"), "utf8")).version;
   const target = path.join(base, `app-${version}`);
-  const done = path.join(target, ".copied");
-  if (!fs.existsSync(done)) {
+  if (fs.existsSync(path.join(target, ".copied"))) return target;
+  // Claude may start two copies at once; each fills its own folder, the first rename wins.
+  const temp = path.join(base, `.tmp-${process.pid}-${Date.now()}`);
+  fs.mkdirSync(temp, { recursive: true });
+  for (const name of ["pyproject.toml", "uv.lock", ".python-version", "README.md", "LICENSE", "manifest.json", "src", "third_party"]) {
+    const from = path.join(source, name);
+    if (fs.existsSync(from)) copyTree(from, path.join(temp, name));
+  }
+  fs.writeFileSync(path.join(temp, ".copied"), version);
+  try {
     fs.rmSync(target, { recursive: true, force: true });
-    fs.mkdirSync(target, { recursive: true });
-    for (const name of ["pyproject.toml", "uv.lock", ".python-version", "README.md", "LICENSE", "manifest.json", "src", "third_party"]) {
-      const from = path.join(source, name);
-      if (fs.existsSync(from)) fs.cpSync(from, path.join(target, name), { recursive: true });
-    }
-    fs.writeFileSync(done, version);
+    fs.renameSync(temp, target);
     log(`copied program files to ${target}`);
+  } catch (e) {
+    fs.rmSync(temp, { recursive: true, force: true });
+    if (!fs.existsSync(path.join(target, ".copied"))) throw e;
   }
   return target;
 }
-const exe = process.platform === "win32" ? "uv.exe" : "uv";
 
 function findUv() {
   if (process.env.INKBRIDGE_UV && fs.existsSync(process.env.INKBRIDGE_UV)) return process.env.INKBRIDGE_UV;
