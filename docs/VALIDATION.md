@@ -1,4 +1,6 @@
-# Validation — v0.2.4 (2026-10-14)
+# Validation — v0.2.5 (2026-10-14)
+
+v0.2.5: building the package also renames files next to the sources, which failed inside the extension folder; the launcher now copies the program to `~/.inkbridge/app-<version>` and runs from there, and writes `~/.inkbridge/launch.log`. Checked that the unpacked extension folder is left unchanged.
 
 v0.2.4: Claude Desktop itself also runs uv at install time for "uv" extensions and failed the same way, so the extension now uses type "node" (Claude's built-in Node.js) with a small launcher, `server/launch.js`, that runs uv with everything in `~/.inkbridge`. Tested by packing, unpacking and driving it with an MCP client in the container.
 

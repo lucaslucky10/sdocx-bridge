@@ -9,7 +9,34 @@ const path = require("path");
 
 const home = os.homedir();
 const base = path.join(home, ".inkbridge");
-const project = path.resolve(__dirname, "..");
+const source = path.resolve(__dirname, "..");
+const logFile = path.join(base, "launch.log");
+fs.mkdirSync(base, { recursive: true });
+function log(msg) {
+  const line = `${new Date().toISOString()} ${msg}\n`;
+  process.stderr.write(line);
+  try { fs.appendFileSync(logFile, line); } catch (_) {}
+}
+
+// Building the package writes temporary files next to the sources, and file renames
+// inside Claude's app-data folder fail on some Windows installs (os error 17).
+// So run from a copy of the sources in ~/.inkbridge/app-<version>.
+function prepareProject() {
+  const version = JSON.parse(fs.readFileSync(path.join(source, "manifest.json"), "utf8")).version;
+  const target = path.join(base, `app-${version}`);
+  const done = path.join(target, ".copied");
+  if (!fs.existsSync(done)) {
+    fs.rmSync(target, { recursive: true, force: true });
+    fs.mkdirSync(target, { recursive: true });
+    for (const name of ["pyproject.toml", "uv.lock", ".python-version", "README.md", "LICENSE", "manifest.json", "src", "third_party"]) {
+      const from = path.join(source, name);
+      if (fs.existsSync(from)) fs.cpSync(from, path.join(target, name), { recursive: true });
+    }
+    fs.writeFileSync(done, version);
+    log(`copied program files to ${target}`);
+  }
+  return target;
+}
 const exe = process.platform === "win32" ? "uv.exe" : "uv";
 
 function findUv() {
@@ -28,7 +55,14 @@ function findUv() {
 
 const uv = findUv();
 if (!uv) {
-  console.error("Inkbridge: uv was not found. Install it from https://docs.astral.sh/uv/ and restart Claude.");
+  log("uv was not found. Install it from https://docs.astral.sh/uv/ and restart Claude.");
+  process.exit(1);
+}
+let project;
+try {
+  project = prepareProject();
+} catch (e) {
+  log(`could not copy program files: ${e.stack || e}`);
   process.exit(1);
 }
 const env = {
@@ -41,8 +75,13 @@ const env = {
   PYTHONUTF8: "1",
 };
 const args = ["run", "--directory", project, "--extra", "audio", "--quiet", "sdocx-bridge", ...process.argv.slice(2)];
-console.error(`Inkbridge: ${uv} ${args.join(" ")}`);
-const child = spawn(uv, args, { env, stdio: "inherit", windowsHide: true });
-child.on("error", (e) => { console.error(`Inkbridge: could not start uv: ${e.message}`); process.exit(1); });
-child.on("exit", (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
+log(`start: ${uv} ${args.join(" ")}`);
+// stdin/stdout carry the MCP messages; stderr is shown in Claude's log and kept in launch.log.
+const child = spawn(uv, args, { env, stdio: ["inherit", "inherit", "pipe"], windowsHide: true });
+child.stderr.on("data", (d) => {
+  process.stderr.write(d);
+  try { fs.appendFileSync(logFile, d); } catch (_) {}
+});
+child.on("error", (e) => { log(`could not start uv: ${e.message}`); process.exit(1); });
+child.on("exit", (code, signal) => { log(`exited with ${code ?? signal}`); process.exit(code ?? (signal ? 1 : 0)); });
 for (const s of ["SIGINT", "SIGTERM"]) process.on(s, () => child.kill(s));
