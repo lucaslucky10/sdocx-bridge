@@ -1,4 +1,8 @@
-# Validation — v0.2.1 (2026-10-14)
+# Validation — v0.2.3 (2026-10-14)
+
+v0.2.3: on the owner's PC even renaming a folder inside the extension directory failed with os error 17 (likely Windows app-data virtualization for the Claude Desktop package). uv's Python, cache and virtual environment now live in `%USERPROFILE%\.inkbridge` instead. Windows retry pending.
+
+## v0.2.1
 
 v0.2.1 fixes the first real Claude Desktop install on Windows (owner's PC): (v0.2.2: the same cross-drive error then hit the managed Python install folder, so Python is now installed inside the extension too via `UV_PYTHON_INSTALL_DIR`.) uv inspected a system Python 3.14 and failed to write its cache (`os error 17`, cross-drive move). The extension now runs uv with `--python-preference only-managed`, its own cache folder inside the extension and `--link-mode copy`. Re-tested in the container only; the Windows retry is pending.
 

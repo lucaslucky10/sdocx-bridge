@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "sdocx-bridge",
   "display_name": "Inkbridge — 삼성노트·PDF 손글씨",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Let Claude read Samsung Notes (.sdocx) and PDFs, transcribe note recordings locally, and write text into them as real pen strokes in your own handwriting.",
   "long_description": "Inkbridge runs on your computer. Claude can open .sdocx and .pdf files from your Downloads, Documents and Desktop folders (and any folders you add), look at every page, read stroke timing, transcribe recordings with a free local Whisper model, and write text in your handwriting as vector ink: PDF ink annotations, or new strokes added to a copy of the Samsung Notes file. Originals are never modified and nothing is uploaded.",
   "author": {
@@ -30,7 +30,7 @@
         "--python-preference",
         "only-managed",
         "--cache-dir",
-        "${__dirname}/.uv-cache",
+        "${HOME}/.inkbridge/uv-cache",
         "--link-mode",
         "copy",
         "--quiet",
@@ -43,7 +43,8 @@
       "env": {
         "SDOCX_BRIDGE_PROFILE_FILE": "${user_config.glyph_file}",
         "PYTHONUTF8": "1",
-        "UV_PYTHON_INSTALL_DIR": "${__dirname}/.uv-python"
+        "UV_PYTHON_INSTALL_DIR": "${HOME}/.inkbridge/python",
+        "UV_PROJECT_ENVIRONMENT": "${HOME}/.inkbridge/venv"
       }
     }
   },
