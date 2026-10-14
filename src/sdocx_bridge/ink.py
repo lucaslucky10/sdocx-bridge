@@ -30,7 +30,11 @@ def check_ink(page):
         if not math.isfinite(s["width"]) or not 0 < s["width"] <= 1000:
             raise ValueError("Invalid pen width")
         if any(
-            len(p) != 2 or not all(math.isfinite(x) and abs(x) < 1e7 for x in p)
+            not isinstance(p, (list, tuple))
+            or len(p) != 2
+            or not all(
+                type(x) in (int, float) and math.isfinite(x) and abs(x) < 1e7 for x in p
+            )
             for p in s["points"]
         ):
             raise ValueError("Invalid coordinates")
@@ -43,6 +47,11 @@ def check_ink(page):
                 raise ValueError("Invalid stroke channel")
         if len(s["color"]) != 3 or any(not 0 <= c <= 1 for c in s["color"]):
             raise ValueError("Invalid color")
+        if (
+            type(s.get("opacity", 1)) not in (int, float)
+            or not 0 <= s.get("opacity", 1) <= 1
+        ):
+            raise ValueError("Invalid opacity")
     if total > 5_000_000:
         raise ValueError("Page point limit exceeded")
 
@@ -73,6 +82,7 @@ def svg(page, background: bytes | None = None):
 
 def draw_pdf_ink(page, strokes, ink_annotations=True):
     """PDF /Ink annotations store editable point sequences, never raster handwriting."""
+    shape = None if ink_annotations else page.new_shape()
     for s in strokes:
         pts = s["points"]
         if len(pts) == 1:
@@ -85,7 +95,6 @@ def draw_pdf_ink(page, strokes, ink_annotations=True):
             ann.set_info(subject="SDOCX Bridge vector ink", content=s["id"])
             ann.update()
         else:
-            shape = page.new_shape()
             shape.draw_polyline(pts)
             shape.finish(
                 color=s["color"],
@@ -94,7 +103,8 @@ def draw_pdf_ink(page, strokes, ink_annotations=True):
                 lineJoin=1,
                 stroke_opacity=s.get("opacity", 1),
             )
-            shape.commit()
+    if shape is not None:
+        shape.commit()
 
 
 def sdocx_export(pages, destination: Path, backgrounds: list[Path] | None = None):

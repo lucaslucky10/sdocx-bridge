@@ -1,5 +1,7 @@
 import asyncio
 import sys
+import json
+import shutil
 from datetime import timedelta
 from fastapi.testclient import TestClient
 from mcp import ClientSession, StdioServerParameters
@@ -56,6 +58,57 @@ def test_mcp_stdio_protocol(lib):
                     "write_handwriting", {"text": "AB", "synthesize": False}
                 )
                 assert not written.isError, written
+                generated = json.loads(
+                    next(c.text for c in written.content if c.type == "text")
+                )
+                shutil.copyfile(
+                    lib.root / "exports" / generated["export_id"] / "handwriting.sdocx",
+                    lib.root / "inbox" / "test.sdocx",
+                )
+                imported = await session.call_tool(
+                    "import_note", {"filename": "test.sdocx"}
+                )
+                assert not imported.isError
+                note = json.loads(
+                    next(c.text for c in imported.content if c.type == "text")
+                )
+                for name, args in [
+                    ("list_notes", {}),
+                    ("inspect_note", {"note_id": note["id"]}),
+                    ("search_notes", {"query": "test"}),
+                    ("export_note", {"note_id": note["id"], "format": "audio"}),
+                ]:
+                    result = await session.call_tool(name, args)
+                    assert not result.isError, result
+                preview = await session.call_tool(
+                    "page_preview", {"note_id": note["id"]}
+                )
+                assert not preview.isError and any(
+                    c.type == "image" for c in preview.content
+                )
+                result = await session.call_tool(
+                    "read_strokes", {"note_id": note["id"], "limit": 1}
+                )
+                strokes = json.loads(
+                    next(c.text for c in result.content if c.type == "text")
+                )
+                assert strokes["next_offset"] == 1 and len(strokes["strokes"]) == 1
+                learned = await session.call_tool(
+                    "learn_character",
+                    {
+                        "note_id": note["id"],
+                        "page_index": 0,
+                        "label": "Z",
+                        "stroke_ids": [strokes["strokes"][0]["id"]],
+                    },
+                )
+                assert not learned.isError
+                resource = await session.read_resource(f"sdocx://note/{note['id']}")
+                assert resource.contents
+                prompt = await session.get_prompt(
+                    "transcribe_note", {"note_id": note["id"]}
+                )
+                assert prompt.messages
                 blocked = await session.call_tool(
                     "import_note", {"filename": "../../private.sdocx"}
                 )

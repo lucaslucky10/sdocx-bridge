@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
+from filelock import Timeout as LockTimeout
 
 from .library import Library
 from .security import MAX_UPLOAD, identifier, under
@@ -43,7 +44,7 @@ class LabelRequest(BaseModel):
 def create_app(root, token=None):
     app = FastAPI(
         title="SDOCX Bridge",
-        version="0.1.0",
+        version="0.1.1",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
@@ -89,6 +90,13 @@ def create_app(root, token=None):
     async def missing(request, exc):
         return JSONResponse(
             {"detail": "Requested file or profile does not exist"}, status_code=404
+        )
+
+    @app.exception_handler(LockTimeout)
+    async def busy_profile(request, exc):
+        return JSONResponse(
+            {"detail": "Another process is updating this profile; try again shortly"},
+            status_code=409,
         )
 
     def serial(function, *args, **kwargs):
@@ -157,7 +165,7 @@ def create_app(root, token=None):
 
     @app.get("/api/notes/{note_id}/pages/{index}/preview")
     def preview(note_id: str, index: int):
-        return Response(library.preview(note_id, index), media_type="image/png")
+        return Response(serial(library.preview, note_id, index), media_type="image/png")
 
     @app.get("/api/notes/{note_id}/audio/{audio_id}")
     def audio(note_id: str, audio_id: str):
@@ -185,6 +193,12 @@ def create_app(root, token=None):
     @app.post("/api/write")
     def write(data: WriteRequest):
         return serial(compose_document, library, **data.model_dump())
+
+    @app.get("/api/exports/{export_id}/preview/{index}")
+    def export_preview(export_id: str, index: int):
+        return Response(
+            serial(library.export_preview, export_id, index), media_type="image/png"
+        )
 
     @app.post("/api/learn")
     def learn(data: LabelRequest):

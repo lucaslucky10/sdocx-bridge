@@ -930,7 +930,7 @@ class SamsungNotesExporter(NoteExporter):
         frame_count = 0
         for element in surface.elements:
             if isinstance(element, StrokeElement):
-                if len(element.points) >= 2:
+                if len(element.points) >= 1:
                     strokes.append(element)
                 continue
             if isinstance(element, TextElement):
@@ -1138,14 +1138,14 @@ class SamsungNotesExporter(NoteExporter):
             for point in stroke.points
             if math.isfinite(_finite_float(point[0])) and math.isfinite(_finite_float(point[1]))
         ]
-        if len(points) < 2:
+        if len(points) < 1:
             return objects
 
         pressures = list(stroke.pressures) if len(stroke.pressures) == len(stroke.points) else []
         timestamps = list(stroke.timestamps) if len(stroke.timestamps) == len(stroke.points) else []
         for start in range(0, len(points), MAX_STROKE_POINTS):
             point_chunk = points[start : start + MAX_STROKE_POINTS]
-            if len(point_chunk) < 2:
+            if len(point_chunk) < 1:
                 continue
             pressure_chunk = pressures[start : start + len(point_chunk)] if pressures else []
             timestamp_chunk = timestamps[start : start + len(point_chunk)] if timestamps else []

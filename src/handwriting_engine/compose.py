@@ -299,9 +299,23 @@ def _parse_transform(t):
 def tex_layout(tex, display=False):
     """Typeset with MathJax. Returns list of items in em/1000 units (y up):
     ('glyph', char, origin_x, origin_y, scale, bbox) and ('rule', x0, y0, x1, y1)."""
-    out = subprocess.run(['node', TEX2SVG, tex, 'display' if display else 'inline'],
-                         capture_output=True, text=True, timeout=30, check=True).stdout
-    root = ET.fromstring(out)
+    try:
+        out = subprocess.run(['node', TEX2SVG, tex, 'display' if display else 'inline'],
+                             capture_output=True, text=True, encoding='utf-8', timeout=30, check=True).stdout
+    except FileNotFoundError as exc:
+        raise ValueError('LaTeX needs Node.js and the optional MathJax installation; see README.') from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError('LaTeX layout exceeded 30 seconds; simplify the formula.') from exc
+    except subprocess.CalledProcessError as exc:
+        raise ValueError('LaTeX renderer failed. Check the optional MathJax installation and formula.') from exc
+    try:
+        root = ET.fromstring(out)
+    except ET.ParseError as exc:
+        raise ValueError('LaTeX renderer returned invalid SVG') from exc
+    if any(el.get('data-mml-node') == 'merror' for el in root.iter()):
+        raise ValueError('Invalid LaTeX formula; correct it before generating handwriting.')
+    if any(el.tag.rsplit('}', 1)[-1] in ('text', 'image', 'foreignObject') for el in root.iter()):
+        raise ValueError('LaTeX contains unsupported text or images. Put Korean text outside $...$; no formula content was omitted.')
     ns = '{http://www.w3.org/2000/svg}'
     items = []
 
@@ -600,12 +614,13 @@ def compose(db, text, width=40.0, line_gap=2.1, seed=None, jitter=1.0, color=INK
     # lines with tall math (fractions, sums) push the next line down instead of overlapping it
     starts.append(len(strokes))
     prev_bot, total = None, 0.0
-    for a, b in zip(starts, starts[1:]):
+    for line_index, (a, b) in enumerate(zip(starts, starts[1:])):
         line = [st for st in strokes[a:b] if 'missing' not in st] or strokes[a:b]
         if not line:
             continue
         for st in strokes[a:b]:
             st['y'] = np.asarray(st['y']) + total
+            st['line'] = line_index
         top = min(float(np.min(st['y'])) for st in line)
         if prev_bot is not None and top < prev_bot + 0.35:
             d = prev_bot + 0.35 - top

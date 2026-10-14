@@ -423,3 +423,11 @@ footer small {
     grid-template-columns: repeat(2, 1fr);
   }
 }
+
+.selection-box {
+  fill: #2e655320;
+  stroke: #2e6553;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}

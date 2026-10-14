@@ -2,6 +2,6 @@ include README.md SECURITY.md LICENSE start.cmd pyproject.toml
 recursive-include docs *.md
 recursive-include third_party *
 recursive-include src/sdocx_bridge/static *.html *.js *.css
-recursive-include src/handwriting_engine/math *.js *.json *.yaml
+include src/handwriting_engine/math/tex2svg.js src/handwriting_engine/math/package.json src/handwriting_engine/math/pnpm-lock.yaml
 prune src/handwriting_engine/math/node_modules
 global-exclude *.pyc

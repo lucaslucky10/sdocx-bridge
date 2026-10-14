@@ -6,16 +6,46 @@ let notes = [],
   selected = new Set(),
   profileList = [],
   drag = null;
-const urls = [];
+const urls = new Map();
+let noteEpoch = 0,
+  pageEpoch = 0,
+  replayTimer = null;
+function clearUrls(prefix) {
+  for (const [key, url] of urls)
+    if (key.startsWith(prefix)) {
+      URL.revokeObjectURL(url);
+      urls.delete(key);
+    }
+}
+function blobUrl(key, blob) {
+  clearUrls(key);
+  const url = URL.createObjectURL(blob);
+  urls.set(key, url);
+  return url;
+}
+function stopReplay() {
+  clearInterval(replayTimer);
+  replayTimer = null;
+  document
+    .querySelectorAll("#viewer polyline")
+    .forEach((p) => (p.style.visibility = "visible"));
+}
 function warningsText(warnings) {
-  return warnings.map(w => {
-    if (w.startsWith("Reverse-engineered parser")) return "손글씨 획 중심의 미리보기입니다. 모든 배경·도형·펜 효과가 원본과 같지는 않습니다. 원본과 필압·시간 데이터는 보관됩니다.";
-    if (w.startsWith("Added Samsung Notes")) return "삼성노트 호환을 위해 마지막에 빈 페이지가 추가됩니다.";
-    if (w.startsWith("Generated pressure/timing")) return "생성된 필압·시간은 원래 필기 기록과 다릅니다. 삼성노트 앱에서 가져오기·편집을 확인해 주세요.";
-    if (w.startsWith("Original PDF content")) return "PDF 출력은 원래 문서를 유지합니다. SDOCX의 PDF 배경은 이미지로 바뀌지만, 손글씨는 독립된 펜 획입니다.";
-    if (w.startsWith("SVG exports ink only")) return "SVG에는 손글씨 획만 포함됩니다. 배경과 입력된 텍스트는 원본·JSON·PDF를 확인하세요.";
-    return w;
-  }).join("\n");
+  return warnings
+    .map((w) => {
+      if (w.startsWith("Reverse-engineered parser"))
+        return "손글씨 획 중심의 미리보기입니다. 모든 배경·도형·펜 효과가 원본과 같지는 않습니다. 원본과 필압·시간 데이터는 보관됩니다.";
+      if (w.startsWith("Added Samsung Notes"))
+        return "삼성노트 호환을 위해 마지막에 빈 페이지가 추가됩니다.";
+      if (w.startsWith("Generated pressure/timing"))
+        return "생성된 필압·시간은 원래 필기 기록과 다릅니다. 삼성노트 앱에서 가져오기·편집을 확인해 주세요.";
+      if (w.startsWith("Original PDF content"))
+        return "PDF 출력은 원래 문서를 유지합니다. SDOCX의 PDF 배경은 이미지로 바뀌지만, 손글씨는 독립된 펜 획입니다.";
+      if (w.startsWith("SVG exports ink only"))
+        return "SVG에는 손글씨 획만 포함됩니다. 배경과 입력된 텍스트는 원본·JSON·PDF를 확인하세요.";
+      return w;
+    })
+    .join("\n");
 }
 function status(message, error = false) {
   $("#status").textContent = message;
@@ -131,23 +161,45 @@ $("#search").oninput = renderNotes;
 $("#files").onchange = () =>
   action(async () => {
     const files = [...$("#files").files];
+    let success = 0;
+    const failures = [];
     for (let i = 0; i < files.length; i++) {
       status(`가져오는 중 ${i + 1}/${files.length}: ${files[i].name}`);
       const form = new FormData();
       form.append("file", files[i]);
-      await json(
-        "upload?profile_name=" + encodeURIComponent($("#profileName").value),
-        { method: "POST", body: form },
-      );
+      try {
+        await json(
+          "upload?profile_name=" + encodeURIComponent($("#profileName").value),
+          { method: "POST", body: form },
+        );
+        success++;
+      } catch (e) {
+        failures.push(`${files[i].name}: ${e.message}`);
+      }
     }
     await refresh();
-    status(`${files.length}개 파일을 가져왔습니다.`);
+    status(
+      `${success}개 가져오기 완료` +
+        (failures.length
+          ? ` · ${failures.length}개 실패: ` + failures.join(" / ")
+          : ""),
+      failures.length > 0,
+    );
     $("#files").value = "";
   });
 async function openNote(id) {
+  const epoch = ++noteEpoch;
+  ++pageEpoch;
   current = id;
+  page = null;
+  drag = null;
+  stopReplay();
+  clearUrls("note:");
   selected.clear();
+  mark();
+  $("#viewer").replaceChildren(el("p", "페이지를 불러오는 중…"));
   const n = await json("notes/" + id);
+  if (epoch !== noteEpoch) return;
   $("#noteTitle").textContent = n.title;
   $("#noteMeta").textContent =
     `${n.pages}쪽 · ${n.strokes.toLocaleString()}획 · ${n.points.toLocaleString()}개 좌표`;
@@ -166,9 +218,15 @@ async function openNote(id) {
     const b = el("button", "재생 / 다운로드 준비");
     b.onclick = () =>
       action(async () => {
-        const blob = await (await api(`notes/${id}/audio/${a.id}`)).blob(),
-          u = URL.createObjectURL(blob);
-        urls.push(u);
+        b.disabled = true;
+        let blob;
+        try {
+          blob = await (await api(`notes/${id}/audio/${a.id}`)).blob();
+        } finally {
+          b.disabled = false;
+        }
+        if (epoch !== noteEpoch) return;
+        const u = blobUrl("note:audio:" + a.id, blob);
         const player = el("audio");
         player.controls = true;
         player.src = u;
@@ -200,22 +258,32 @@ function point(event, svg) {
 }
 async function showPage() {
   if (!current) return;
-  page = await json(`notes/${current}/pages/${$("#pageSelect").value || 0}`);
+  const epoch = ++pageEpoch,
+    id = current,
+    index = $("#pageSelect").value || 0;
+  page = null;
+  drag = null;
   selected.clear();
+  mark();
+  stopReplay();
+  clearUrls("note:page");
+  $("#viewer").replaceChildren(el("p", "페이지를 불러오는 중…"));
+  const loaded = await json(`notes/${id}/pages/${index}`);
+  if (epoch !== pageEpoch || id !== current) return;
+  page = loaded;
   $("#typedText").textContent =
     page.text || "입력된 텍스트 없음. 손글씨는 페이지를 보고 읽어야 합니다.";
   const viewer = $("#viewer");
   viewer.replaceChildren();
   if (!page.strokes.length) {
-    const blob = await (
-      await api(`notes/${current}/pages/${$("#pageSelect").value || 0}/preview`)
-    ).blob();
-    const u = URL.createObjectURL(blob);
-    urls.push(u);
+    const blob = await (await api(`notes/${id}/pages/${index}/preview`)).blob();
+    if (epoch !== pageEpoch || id !== current) return;
+    const u = blobUrl("note:page", blob);
     const img = el("img");
     img.src = u;
     img.alt = "PDF 페이지";
     viewer.append(img);
+    mark();
     return;
   }
   const ns = "http://www.w3.org/2000/svg",
@@ -225,7 +293,12 @@ async function showPage() {
   for (const s of page.strokes) {
     const p = document.createElementNS(ns, "polyline");
     p.dataset.id = s.id;
-    p.setAttribute("points", s.points.map((p) => p.join(",")).join(" "));
+    const pts =
+      s.points.length === 1
+        ? [s.points[0], [s.points[0][0] + 0.001, s.points[0][1]]]
+        : s.points;
+    p.setAttribute("points", pts.map((p) => p.join(",")).join(" "));
+    p.setAttribute("opacity", s.opacity ?? 1);
     p.setAttribute("fill", "none");
     p.setAttribute(
       "stroke",
@@ -236,7 +309,25 @@ async function showPage() {
     p.setAttribute("stroke-linejoin", "round");
     svg.append(p);
   }
+  const box = document.createElementNS(ns, "rect");
+  box.setAttribute("class", "selection-box");
+  box.setAttribute("visibility", "hidden");
+  svg.append(box);
+  svg.onpointermove = (e) => {
+    if (!drag) return;
+    const end = point(e, svg);
+    box.setAttribute("x", Math.min(drag.x, end.x));
+    box.setAttribute("y", Math.min(drag.y, end.y));
+    box.setAttribute("width", Math.abs(end.x - drag.x));
+    box.setAttribute("height", Math.abs(end.y - drag.y));
+    box.setAttribute("visibility", "visible");
+  };
+  svg.onpointercancel = () => {
+    drag = null;
+    box.setAttribute("visibility", "hidden");
+  };
   svg.onpointerdown = (e) => {
+    stopReplay();
     drag = point(e, svg);
     svg.setPointerCapture(e.pointerId);
   };
@@ -261,6 +352,9 @@ async function showPage() {
           selected.add(s.id);
     }
     drag = null;
+    box.setAttribute("visibility", "hidden");
+    if (svg.hasPointerCapture(e.pointerId))
+      svg.releasePointerCapture(e.pointerId);
     mark();
   };
   viewer.append(svg);
@@ -272,7 +366,7 @@ $("#clearSelection").onclick = () => {
 };
 $("#learn").onclick = () =>
   action(async () => {
-    if (!current || !selected.size)
+    if (!current || !page || !selected.size)
       throw Error("학습할 글자의 획을 먼저 선택하세요.");
     await post("learn", {
       note_id: current,
@@ -351,18 +445,28 @@ $("#write").onclick = () =>
           `${r.pages}쪽 / ${r.strokes}개 실제 획 · 조합한 한글: ${r.assembled_hangul.join(" ") || "없음"} · 만든 기호: ${r.derived_symbols.join(" ") || "없음"}`,
         ),
       );
-      const first = r.files.find((f) => f.endsWith(".svg"));
-      if (first) {
+      clearUrls("result:");
+      const chooser = el("select");
+      chooser.setAttribute("aria-label", "완성 파일 미리보기 쪽");
+      for (let i = 0; i < r.pages; i++)
+        chooser.add(new Option(`${i + 1} / ${r.pages}쪽`, i));
+      chooser.value = String(
+        Math.min(r.pages - 1, Math.max(0, Number($("#startPage").value) - 1)),
+      );
+      const img = el("img");
+      img.alt = "배경 PDF와 생성한 손글씨 획 미리보기";
+      out.append(chooser, img);
+      let previewEpoch = 0;
+      const render = async () => {
+        const epoch = ++previewEpoch;
         const blob = await (
-          await api(`exports/${r.export_id}/${first}`)
+          await api(`exports/${r.export_id}/preview/${chooser.value}`)
         ).blob();
-        const u = URL.createObjectURL(blob);
-        urls.push(u);
-        const img = el("img");
-        img.src = u;
-        img.alt = "생성한 실제 손글씨 획";
-        out.append(img);
-      }
+        if (epoch !== previewEpoch || !img.isConnected) return;
+        img.src = blobUrl("result:page", blob);
+      };
+      chooser.onchange = () => action(render);
+      await render();
       status(
         "손글씨 파일을 만들었습니다. 생성 보고서와 미리보기를 확인하세요.",
       );
@@ -371,23 +475,22 @@ $("#write").onclick = () =>
     }
   });
 $("#replay").onclick = () => {
+  stopReplay();
   const lines = [...document.querySelectorAll("#viewer polyline")];
   if (lines.length > 20000)
     return status("획이 너무 많아 재생을 생략합니다.", true);
   lines.forEach((p) => (p.style.visibility = "hidden"));
   let i = 0;
-  const timer = setInterval(() => {
+  replayTimer = setInterval(() => {
     for (
       let n = 0;
       n < Math.max(1, Math.ceil(lines.length / 250)) && i < lines.length;
       n++, i++
     )
       lines[i].style.visibility = "visible";
-    if (i >= lines.length) clearInterval(timer);
+    if (i >= lines.length) stopReplay();
   }, 20);
   status("저장된 획 순서 재생입니다. 녹음 시간과 동기화된 재생은 아닙니다.");
 };
 action(refresh);
-window.addEventListener("beforeunload", () =>
-  urls.forEach(URL.revokeObjectURL),
-);
+window.addEventListener("beforeunload", () => clearUrls(""));

@@ -5,10 +5,10 @@ if not exist ".venv\Scripts\python.exe" (
   python -m venv .venv
   if errorlevel 1 goto failed
 )
-if not exist ".venv\inkbridge-installed" (
+if not exist ".venv\inkbridge-installed-0.1.1" (
   .venv\Scripts\python.exe -m pip install -e .
   if errorlevel 1 goto failed
-  type nul > .venv\inkbridge-installed
+  type nul > .venv\inkbridge-installed-0.1.1
 )
 echo Open http://127.0.0.1:8765 in your browser.
 .venv\Scripts\python.exe -m sdocx_bridge --library "%~dp0library" web

@@ -9,6 +9,6 @@ Run on loopback only. This release is a local desktop companion, not a multi-use
 - MCP file imports are scoped to `library/inbox`; exports use generated IDs and filenames. No tool accepts an arbitrary output path or shell command. The CLI can import user-selected local files.
 - Notes are untrusted content; MCP instructions and prompts distinguish note content from commands.
 - Limits are conservative safeguards, not an audited resource sandbox. Native PDF libraries and reverse-engineered parsers remain a risk with deliberately hostile inputs. Do not expose the server publicly or run with administrator privileges.
-- Multiple desktop processes may share a library for reads. Avoid simultaneous edits to the same glyph profile; cross-process edit transactions are not implemented in 0.1.
+- Glyph imports and learning use per-profile filesystem locks across desktop/MCP processes and atomic JSON replacement. Exports publish a staged directory only after all output and integrity checks succeed; failed exports leave no visible partial result.
 
 Report vulnerabilities privately to the repository owner through GitHub's available security reporting channel. Never attach private notes or recordings to a public issue.

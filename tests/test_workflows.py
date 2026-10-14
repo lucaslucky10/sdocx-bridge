@@ -121,7 +121,9 @@ def test_export_formats(lib):
 
 
 def test_profile_rejects_nan(lib):
-    p = json.loads((lib.root / "profiles/my-handwriting.json").read_text(encoding="utf-8"))
+    p = json.loads(
+        (lib.root / "profiles/my-handwriting.json").read_text(encoding="utf-8")
+    )
     p["glyphs"][0]["strokes"][0]["p"][0][0] = float("nan")
     with pytest.raises(ValueError):
         validate_profile(p)

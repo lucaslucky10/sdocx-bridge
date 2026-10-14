@@ -6,11 +6,25 @@ import os
 import re
 import stat
 import zipfile
+import tempfile
+import uuid
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
 MAX_UPLOAD = 512 * 1024**2
 MAX_EXPANDED = 2 * 1024**3
 MAX_MEMBER = 512 * 1024**2
+WINDOWS_DEVICE = re.compile(r"^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(?:\.|$)", re.I)
+
+
+@contextmanager
+def export_transaction(root: Path):
+    """Publish a complete export atomically; failures never expose partial results."""
+    eid = uuid.uuid4().hex[:16]
+    with tempfile.TemporaryDirectory(prefix="export-", dir=root) as tmp:
+        stage = Path(tmp)
+        yield eid, stage
+        stage.rename(root / "exports" / eid)
 
 
 def sha256(path: Path) -> str:
@@ -19,7 +33,7 @@ def sha256(path: Path) -> str:
 
 
 def identifier(value: str) -> str:
-    if not re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", value):
+    if not re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", value) or WINDOWS_DEVICE.match(value):
         raise ValueError("Invalid identifier")
     return value
 
@@ -56,17 +70,18 @@ def safe_extract(source: Path, destination: Path) -> list[dict]:
         for item in infos:
             name = item.orig_filename
             parts = PurePosixPath(name).parts
+            raw_parts = name.rstrip("/").split("/")
             if (
                 not parts
                 or name.startswith("/")
                 or "\\" in name
                 or ":" in name
+                or any(ord(c) < 32 or c in '<>"|?*' for c in name)
+                or any(p in ("", ".", "..") for p in raw_parts)
                 or any(
                     p in (".", "..")
                     or p.endswith((" ", "."))
-                    or re.match(
-                        r"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)", p, re.I
-                    )
+                    or WINDOWS_DEVICE.match(p)
                     for p in parts
                 )
                 or stat.S_ISLNK(item.external_attr >> 16)
