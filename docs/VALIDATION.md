@@ -66,3 +66,9 @@ The GitHub Actions matrix tests Windows/Linux and Python 3.11/3.13. Its online r
 ## PDF implementation reference
 
 The rotation change uses [PyMuPDF Page.remove_rotation](https://pymupdf.readthedocs.io/en/latest/page.html#Page.remove_rotation), which preserves appearance and adjusts annotations/links/widgets. A normal PDF re-export now copies the original bytes instead of rebuilding pages with show_pdf_page; previews rasterize the original page with annotations. Automated tests verify the resulting behavior.
+
+## v0.1.1 full corpus re-audit
+
+All 27 supplied files were imported into fresh temporary libraries (no cached import summaries). All 135 export calls (27 × JSON/SVG/PDF/Markdown/audio) completed. The 112 exported PDF pages were rasterized successfully, and their 72,431 Ink annotations matched the imported stroke count. First/last-page previews were also exercised. Original SHA-256 checks passed for 27/27 files; extracted recording hashes passed for 4/4 files. No additional per-object PDF rendering errors were reported. This is execution/integrity coverage, not a pixel-fidelity comparison with Samsung Notes.
+
+The current suite has 57 cases. GitHub Actions runs all four Windows/Linux × Python 3.11/3.13 jobs, including optional MathJax. The Windows npm installation needed an explicit working directory; the workflow and README were corrected. See Actions for the final commit's result.
