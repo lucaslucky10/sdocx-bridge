@@ -28,6 +28,13 @@ def validate_profile(data):
     for g in glyphs:
         if not isinstance(g, dict):
             raise ValueError("Each glyph must be an object")
+        provenance = g.get("provenance", {})
+        if (
+            not isinstance(provenance, dict)
+            or not isinstance(provenance.get("stroke_ids", []), list)
+            or any(not isinstance(sid, str) for sid in provenance.get("stroke_ids", []))
+        ):
+            raise ValueError("Invalid glyph provenance")
         if not isinstance(g.get("ch"), str) or not 1 <= len(g["ch"]) <= 32:
             raise ValueError("Invalid glyph label")
         for k in ("adv", "top", "bot"):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import collections
+import errno
 import json
 import shutil
 import tempfile
@@ -142,8 +143,13 @@ class Library:
             json_write(stage / "summary.json", summary)
             try:
                 stage.rename(destination)
-            except FileExistsError:
-                if not (destination / "summary.json").exists():
+            except OSError as exc:
+                # Windows reports EEXIST, Linux may report ENOTEMPTY when
+                # another importer publishes the same content first.
+                if (
+                    exc.errno not in (errno.EEXIST, errno.ENOTEMPTY)
+                    or not (destination / "summary.json").exists()
+                ):
                     raise
                 return json.loads(
                     (destination / "summary.json").read_text(encoding="utf-8")

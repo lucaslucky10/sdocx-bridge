@@ -29,7 +29,7 @@ The owner's existing dictionary imported 13,183 glyph variants over 629 labels. 
 
 ## Automated tests
 
-**54 tests passed** locally. Test data is synthetic; no private corpus is required for public tests.
+**57 tests passed** locally. Test data is synthetic; no private corpus is required for public tests.
 
 - ZIP traversal, absolute/Windows paths, reserved devices, symlink entries, case collisions, compression bombs.
 - Input validation, upload handling, duplicate imports, malformed archives, scoped profile IDs, nonfinite coordinates.

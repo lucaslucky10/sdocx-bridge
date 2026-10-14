@@ -1,6 +1,7 @@
 """Regression cases found during the second feature-by-feature audit."""
 
 import json
+import errno
 from unittest.mock import patch
 
 import pymupdf as fitz
@@ -237,3 +238,36 @@ def test_profile_import_waits_for_other_process_lock(lib):
     _, err = process.communicate(timeout=30)
     assert process.returncode == 0, err
     assert json.loads(path.read_text(encoding="utf-8"))["glyphs"]
+
+
+def test_invalid_learning_provenance_is_rejected(lib):
+    data = json.loads(
+        (lib.root / "profiles/my-handwriting.json").read_text(encoding="utf-8")
+    )
+    data["glyphs"][0]["provenance"] = None
+    with pytest.raises(ValueError, match="provenance"):
+        validate_profile(data)
+
+
+@pytest.mark.parametrize("error_number", [errno.EEXIST, errno.ENOTEMPTY])
+def test_import_race_uses_winners_metadata(lib, tmp_path, error_number):
+    import shutil
+    from pathlib import Path
+
+    source = tmp_path / "race.pdf"
+    annotated_pdf(source)
+    original_rename = Path.rename
+
+    def concurrent_publish(stage, destination):
+        if stage.name.startswith("import-"):
+            shutil.copytree(stage, destination)
+            summary = destination / "summary.json"
+            data = json.loads(summary.read_text(encoding="utf-8"))
+            data["title"] = "other importer"
+            summary.write_text(json.dumps(data), encoding="utf-8")
+            raise OSError(error_number, "simulated competing importer")
+        return original_rename(stage, destination)
+
+    with patch.object(Path, "rename", concurrent_publish):
+        result = lib.import_file(source, "this importer")
+    assert result["title"] == "other importer"
