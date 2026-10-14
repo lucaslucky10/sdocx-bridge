@@ -40,7 +40,15 @@ function warningsText(warnings) {
       if (w.startsWith("Generated pressure/timing"))
         return "생성된 필압·시간은 원래 필기 기록과 다릅니다. 삼성노트 앱에서 가져오기·편집을 확인해 주세요.";
       if (w.startsWith("Original PDF content"))
-        return "PDF 출력은 원래 문서를 유지합니다. SDOCX의 PDF 배경은 이미지로 바뀌지만, 손글씨는 독립된 펜 획입니다.";
+        return "원래 PDF 내용은 그대로 두고, 손글씨를 편집 가능한 잉크 주석으로 더했습니다.";
+      if (w.startsWith("In the SDOCX copy"))
+        return "삼성노트 사본에서는 PDF 쪽이 배경 이미지가 됩니다. 손글씨는 독립된 펜 획입니다.";
+      if (w.startsWith("New SDOCX"))
+        return "새 삼성노트의 필압·시간은 생성한 값입니다. 삼성노트 앱에서 열어 확인해 주세요.";
+      if (w.startsWith("Your original file is unchanged"))
+        return "원본 파일은 그대로입니다. 사본에 모든 쪽·녹음·첨부가 유지됩니다.";
+      if (w.startsWith("Samsung Notes format is reverse engineered"))
+        return "삼성노트 형식은 공개되지 않은 형식이라, 사본을 삼성노트 앱에서 열어 한 번 확인해 주세요.";
       if (w.startsWith("SVG exports ink only"))
         return "SVG에는 손글씨 획만 포함됩니다. 배경과 입력된 텍스트는 원본·JSON·PDF를 확인하세요.";
       return w;
@@ -143,12 +151,21 @@ async function refresh() {
   });
   if (profileList.some((p) => p.id === old)) $("#profile").value = old;
   coverage();
-  const pid = $("#pdf").value;
-  $("#pdf").replaceChildren(new Option("새 빈 노트 (A4)", ""));
-  notes
-    .filter((n) => n.kind === "pdf")
-    .forEach((n) => $("#pdf").add(new Option(n.title, n.id)));
-  $("#pdf").value = pid;
+  const tid = $("#target").value;
+  $("#target").replaceChildren(new Option("새 빈 노트 (A4)", ""));
+  for (const [kind, label] of [
+    ["pdf", "PDF 위에 쓰기"],
+    ["sdocx", "삼성노트에 이어 쓰기"],
+  ]) {
+    const group = el("optgroup");
+    group.label = label;
+    notes
+      .filter((n) => n.kind === kind)
+      .forEach((n) => group.append(new Option(n.title, n.id)));
+    if (group.children.length) $("#target").append(group);
+  }
+  if ([...$("#target").options].some((o) => o.value === tid))
+    $("#target").value = tid;
 }
 function coverage() {
   const p = profileList.find((p) => p.id === $("#profile").value);
@@ -208,41 +225,151 @@ async function openNote(id) {
   n.page_details.forEach((p) =>
     $("#pageSelect").add(new Option(`${p.index + 1} / ${n.pages}쪽`, p.index)),
   );
+  noteAudio = n.audio;
   $("#audio").replaceChildren();
-  for (const a of n.audio) {
-    const row = el("div", undefined, "audio-row");
-    row.append(
-      el("strong", a.name),
-      el("p", `${(a.bytes / 1024 / 1024).toFixed(1)} MB · 원본 그대로 추출`),
-    );
-    const b = el("button", "재생 / 다운로드 준비");
-    b.onclick = () =>
-      action(async () => {
-        b.disabled = true;
-        let blob;
-        try {
-          blob = await (await api(`notes/${id}/audio/${a.id}`)).blob();
-        } finally {
-          b.disabled = false;
-        }
-        if (epoch !== noteEpoch) return;
-        const u = blobUrl("note:audio:" + a.id, blob);
-        const player = el("audio");
-        player.controls = true;
-        player.src = u;
-        const link = el("a", "녹음 다운로드", "download-link");
-        link.href = u;
-        link.download = a.name;
-        row.append(player, link);
-        b.remove();
-      });
-    row.append(b);
-    $("#audio").append(row);
-  }
+  for (const a of n.audio) $("#audio").append(audioRow(id, a, epoch));
   renderNotes();
   await showPage();
 }
 $("#pageSelect").onchange = () => action(showPage);
+let noteAudio = [];
+function clock(seconds) {
+  const s = Math.max(0, Math.round(seconds)),
+    h = Math.floor(s / 3600),
+    m = Math.floor((s % 3600) / 60),
+    r = s % 60;
+  return (h ? h + ":" : "") + String(m).padStart(2, "0") + ":" + String(r).padStart(2, "0");
+}
+function seconds(text) {
+  return text.split(":").reduce((t, v) => t * 60 + Number(v), 0);
+}
+function syncInk(audio, t) {
+  // Show ink written up to this moment of the recording; fade the rest.
+  if (!page || audio.start_ms == null) return;
+  const now = audio.start_ms + t * 1000;
+  const lines = document.querySelectorAll("#viewer polyline");
+  page.strokes.forEach((s, i) => {
+    if (!lines[i] || s.created_us == null) return;
+    const ms = s.created_us / 1000;
+    lines[i].classList.toggle("future", ms > now);
+    lines[i].classList.toggle("now", ms <= now && ms > now - 8000);
+  });
+}
+function audioRow(id, a, epoch) {
+  const row = el("div", undefined, "audio-row");
+  const length = a.length_ms ? " · " + clock(a.length_ms / 1000) : "";
+  row.append(
+    el("strong", (a.title || a.name) + length),
+    el("p", `${(a.bytes / 1024 / 1024).toFixed(1)} MB · 원본 그대로 추출 · ${a.name}`, "hint"),
+  );
+  const actions = el("div", undefined, "toolbar");
+  const play = el("button", "▶ 듣기 · 필기와 함께 보기");
+  const trans = el("button", "받아쓰기");
+  actions.append(play, trans);
+  row.append(actions);
+  let player = null;
+  const transcriptBox = el("div", undefined, "transcript");
+  row.append(transcriptBox);
+  const ensurePlayer = async () => {
+    if (player) return player;
+    const blob = await (await api(`notes/${id}/audio/${a.id}`)).blob();
+    if (epoch !== noteEpoch) return null;
+    const u = blobUrl("note:audio:" + a.id, blob);
+    player = el("audio");
+    player.controls = true;
+    player.src = u;
+    player.ontimeupdate = () => syncInk(a, player.currentTime);
+    player.onpause = () => {};
+    const link = el("a", "녹음 파일 받기", "download-link");
+    link.href = u;
+    link.download = a.name;
+    actions.after(player, link);
+    return player;
+  };
+  play.onclick = () =>
+    action(async () => {
+      play.disabled = true;
+      try {
+        const p = await ensurePlayer();
+        if (p) {
+          p.play();
+          status(
+            a.start_ms != null
+              ? "재생 위치까지 쓴 필기만 진하게 보입니다. 방금 쓴 획은 강조됩니다."
+              : "이 녹음은 필기 시각 정보가 없어 동기화 없이 재생합니다.",
+          );
+        }
+      } finally {
+        play.disabled = false;
+      }
+    });
+  const showTranscript = (data) => {
+    transcriptBox.replaceChildren();
+    for (const seg of data.segments) {
+      const line = el("button", undefined, "segment");
+      const written = (seg.written_meanwhile || [])
+        .map((w) => `${w.page}쪽 ${w.strokes}획`)
+        .join(", ");
+      line.append(
+        el("span", seg.at, "time"),
+        el("span", seg.text),
+        el("small", written ? "필기: " + written : data.alignment.startsWith("No") ? "" : "이때 쓴 필기 없음"),
+      );
+      if (!written && !data.alignment.startsWith("No")) line.classList.add("unwritten");
+      line.onclick = () =>
+        action(async () => {
+          const p = await ensurePlayer();
+          if (!p) return;
+          p.currentTime = seconds(seg.at);
+          syncInk(a, p.currentTime);
+        });
+      transcriptBox.append(line);
+    }
+    const copy = el("button", "받아쓴 글 복사");
+    copy.onclick = () =>
+      navigator.clipboard.writeText(data.segments.map((s) => `[${s.at}] ${s.text}`).join("\n"));
+    transcriptBox.prepend(
+      el("p", `${data.model} 모델 · ${data.segments_total}문장 · 붉은 줄은 그 시각에 쓴 필기가 없는 부분입니다.`, "hint"),
+      copy,
+    );
+  };
+  const poll = async () => {
+    const data = await json(`notes/${id}/audio/${a.id}/transcript`);
+    if (epoch !== noteEpoch) return;
+    if (data.state === "done") {
+      trans.textContent = "받아쓰기 완료";
+      trans.disabled = true;
+      showTranscript(data);
+      return;
+    }
+    if (data.state === "failed") {
+      trans.disabled = false;
+      throw Error("받아쓰기 실패: " + data.error);
+    }
+    if (["starting", "downloading model", "transcribing"].includes(data.state)) {
+      trans.disabled = true;
+      trans.textContent =
+        data.state === "transcribing"
+          ? `받아쓰는 중 ${Math.round(data.progress * 100)}% (${data.position}/${data.length})`
+          : data.state === "downloading model"
+            ? "음성 인식 모델 준비 중… (처음 한 번)"
+            : "시작하는 중…";
+      setTimeout(() => action(poll), 4000);
+    } else if (data.available === false) {
+      trans.disabled = true;
+      trans.title = "음성 인식 구성요소(sdocx-bridge[audio])가 설치되어 있지 않습니다.";
+    }
+  };
+  trans.onclick = () =>
+    action(async () => {
+      trans.disabled = true;
+      await post(`notes/${id}/audio/${a.id}/transcribe`, { model: "turbo", language: "ko" });
+      status("이 컴퓨터에서 받아쓰는 중입니다. 외부로 보내지 않습니다. 긴 강의는 몇 분 이상 걸립니다.");
+      await poll();
+    });
+  action(poll);
+  return row;
+}
 function mark() {
   document
     .querySelectorAll("#viewer polyline")
@@ -418,21 +545,120 @@ for (const [id, format] of [
       await downloads(r, $("#downloadLinks"));
       status("내보내기 완료");
     });
+let placeNote = null,
+  placeEpoch = 0,
+  placeBox = null;
+function numberOrNull(id) {
+  const v = $(id).value.trim();
+  return v === "" ? null : Number(v);
+}
+async function loadTarget() {
+  const id = $("#target").value;
+  placeNote = null;
+  placeBox = null;
+  $("#startPage").replaceChildren(new Option("1", "0"));
+  if (!id) {
+    $("#placer").replaceChildren(
+      el("div", "새 A4 노트에 왼쪽 위부터 씁니다.", "empty"),
+    );
+    $("#placeHint").textContent = "";
+    $("#size").placeholder = "자동 (22)";
+    return;
+  }
+  const n = await json("notes/" + id);
+  if (id !== $("#target").value) return;
+  placeNote = n;
+  $("#startPage").replaceChildren();
+  n.page_details.forEach((p) =>
+    $("#startPage").add(new Option(`${p.index + 1} / ${n.pages}`, p.index)),
+  );
+  await showPlacer();
+}
+async function showPlacer() {
+  if (!placeNote) return;
+  const epoch = ++placeEpoch,
+    n = placeNote,
+    index = Number($("#startPage").value || 0),
+    info = n.page_details[index];
+  placeBox = null;
+  ["#x", "#y", "#width"].forEach((k) => ($(k).value = ""));
+  $("#placeHint").textContent = "쓸 자리를 드래그하세요. 드래그한 폭 안에서 줄이 바뀝니다.";
+  let auto = n.kind === "pdf" ? 22 : null;
+  if (n.kind === "sdocx" && info.strokes) {
+    const layout = await json(`notes/${n.id}/pages/${index}/layout`);
+    auto = layout.typical_handwriting_height;
+  }
+  $("#size").placeholder = auto ? `자동 (${Math.round(auto)})` : "자동";
+  const blob = await (await api(`notes/${n.id}/pages/${index}/preview`)).blob();
+  if (epoch !== placeEpoch) return;
+  const wrap = el("div", undefined, "placer-wrap");
+  const img = el("img");
+  img.src = blobUrl("place:page", blob);
+  img.alt = "쓸 페이지";
+  const rect = el("div", undefined, "place-rect hidden");
+  wrap.append(img, rect);
+  $("#placer").replaceChildren(wrap);
+  let start = null;
+  const toPage = (e) => {
+    const r = img.getBoundingClientRect();
+    return [
+      Math.max(0, Math.min(info.width, ((e.clientX - r.left) / r.width) * info.width)),
+      Math.max(0, Math.min(info.height, ((e.clientY - r.top) / r.height) * info.height)),
+    ];
+  };
+  const draw = (x0, y0, x1, y1) => {
+    const k = img.getBoundingClientRect().width / info.width;
+    Object.assign(rect.style, {
+      left: Math.min(x0, x1) * k + "px",
+      top: Math.min(y0, y1) * k + "px",
+      width: Math.abs(x1 - x0) * k + "px",
+      height: Math.max(Math.abs(y1 - y0), 4) * k + "px",
+    });
+    rect.classList.remove("hidden");
+  };
+  wrap.onpointerdown = (e) => {
+    e.preventDefault();
+    start = toPage(e);
+    wrap.setPointerCapture(e.pointerId);
+  };
+  wrap.onpointermove = (e) => {
+    if (start) draw(...start, ...toPage(e));
+  };
+  wrap.onpointerup = (e) => {
+    if (!start) return;
+    const end = toPage(e);
+    let [x0, y0] = [Math.min(start[0], end[0]), Math.min(start[1], end[1])];
+    let w = Math.abs(end[0] - start[0]);
+    if (w < info.width * 0.05) w = info.width - x0 - info.width * 0.05; // a click: write to the right margin
+    draw(x0, y0, x0 + w, Math.max(y0 + Math.abs(end[1] - start[1]), y0 + 4));
+    placeBox = { x: x0, y: y0, width: w };
+    $("#x").value = Math.round(x0);
+    $("#y").value = Math.round(y0);
+    $("#width").value = Math.round(w);
+    $("#placeHint").textContent = `x ${Math.round(x0)}, y ${Math.round(y0)}, 너비 ${Math.round(w)} · 다시 드래그하면 바뀝니다.`;
+    start = null;
+  };
+}
+$("#target").onchange = () => action(loadTarget);
+$("#startPage").onchange = () => action(showPlacer);
 $("#write").onclick = () =>
   action(async () => {
     if (!$("#profile").value) throw Error("글자 사전이 필요합니다.");
+    if (!$("#text").value.trim()) throw Error("쓸 내용을 입력하세요.");
     $("#write").disabled = true;
     status("실제 획으로 문장을 만들고 있습니다…");
     try {
       const r = await post("write", {
         text: $("#text").value,
         profile: $("#profile").value,
-        pdf_id: $("#pdf").value || null,
-        page_index: Number($("#startPage").value) - 1,
-        x: Number($("#x").value),
-        y: Number($("#y").value),
-        size: Number($("#size").value),
-        width: Number($("#width").value),
+        target_id: $("#target").value || null,
+        page_index: Number($("#startPage").value || 0),
+        x: numberOrNull("#x"),
+        y: numberOrNull("#y"),
+        size: numberOrNull("#size"),
+        width: numberOrNull("#width"),
+        color: $("#color").value || null,
+        line_spacing: Number($("#lineSpacing").value) || 2.1,
         seed: Number($("#seed").value),
         synthesize: $("#synth").checked,
       });
@@ -442,41 +668,33 @@ $("#write").onclick = () =>
       out.prepend(
         el(
           "p",
-          `${r.pages}쪽 / ${r.strokes}개 실제 획 · 조합한 한글: ${r.assembled_hangul.join(" ") || "없음"} · 만든 기호: ${r.derived_symbols.join(" ") || "없음"}`,
+          `${r.pages_written.join(", ")}쪽에 ${r.strokes}개 실제 획 · 글자 높이 ${r.size} · 조합한 한글: ${r.assembled_hangul.join(" ") || "없음"}`,
         ),
       );
       clearUrls("result:");
-      const chooser = el("select");
-      chooser.setAttribute("aria-label", "완성 파일 미리보기 쪽");
-      for (let i = 0; i < r.pages; i++)
-        chooser.add(new Option(`${i + 1} / ${r.pages}쪽`, i));
-      chooser.value = String(
-        Math.min(r.pages - 1, Math.max(0, Number($("#startPage").value) - 1)),
-      );
       const img = el("img");
-      img.alt = "배경 PDF와 생성한 손글씨 획 미리보기";
-      out.append(chooser, img);
-      let previewEpoch = 0;
-      const render = async () => {
-        const epoch = ++previewEpoch;
-        const blob = await (
-          await api(`exports/${r.export_id}/preview/${chooser.value}`)
-        ).blob();
-        if (epoch !== previewEpoch || !img.isConnected) return;
-        img.src = blobUrl("result:page", blob);
-      };
-      chooser.onchange = () => action(render);
-      await render();
-      status(
-        "손글씨 파일을 만들었습니다. 생성 보고서와 미리보기를 확인하세요.",
-      );
+      img.alt = "완성 파일 미리보기";
+      out.append(img);
+      const blob = await (
+        await api(`exports/${r.export_id}/preview/${r.pages_written[0] - 1}`)
+      ).blob();
+      if (img.isConnected) img.src = blobUrl("result:page", blob);
+      status("손글씨 파일을 만들었습니다. 미리보기를 확인하고 내려받으세요.");
     } finally {
       $("#write").disabled = false;
     }
   });
 $("#replay").onclick = () => {
   stopReplay();
-  const lines = [...document.querySelectorAll("#viewer polyline")];
+  if (!page) return;
+  const all = [...document.querySelectorAll("#viewer polyline")];
+  // Replay in the order the strokes were written (creation time), when known.
+  const order = page.strokes
+    .map((s, i) => [s.created_us ?? i, i])
+    .sort((p, q) => p[0] - q[0])
+    .map((p) => all[p[1]])
+    .filter(Boolean);
+  const lines = order.length === all.length ? order : all;
   if (lines.length > 20000)
     return status("획이 너무 많아 재생을 생략합니다.", true);
   lines.forEach((p) => (p.style.visibility = "hidden"));
@@ -490,7 +708,10 @@ $("#replay").onclick = () => {
       lines[i].style.visibility = "visible";
     if (i >= lines.length) stopReplay();
   }, 20);
-  status("저장된 획 순서 재생입니다. 녹음 시간과 동기화된 재생은 아닙니다.");
+  status("필기한 순서대로 다시 보여 줍니다.");
 };
-action(refresh);
+action(async () => {
+  await refresh();
+  await loadTarget();
+});
 window.addEventListener("beforeunload", () => clearUrls(""));

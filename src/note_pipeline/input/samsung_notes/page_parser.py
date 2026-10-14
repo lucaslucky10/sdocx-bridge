@@ -559,6 +559,39 @@ class SpenNotesPageParser:
 
         return info
 
+    def _object_times_us(self, obj: Dict[str, object]) -> Tuple[Optional[int], Optional[int]]:
+        """Return (created, modified) epoch microseconds from an object's base record.
+
+        Bridge addition. The base record stores a 36-character object UUID followed by
+        the modified time; the creation time follows the rectangle(s). Samsung Notes uses
+        the creation time to synchronise handwriting with voice recordings.
+        """
+        base = next((record for record in obj.get("subrecords", []) if record["type"] == 0), None)
+        if base is None:
+            return None, None
+        start, end = int(base["start"]), int(base["end"])
+        cursor = start + 6
+        limit = min(end, start + 80)
+        while cursor + 40 <= limit:
+            if self._u16(cursor) == 36:
+                uuid_bytes = self.data[cursor + 2 : cursor + 38]
+                if all(48 <= b <= 57 or 97 <= b <= 102 or 65 <= b <= 70 or b == 45 for b in uuid_bytes):
+                    break
+            cursor += 1
+        else:
+            return None, None
+        modified_at = cursor + 38
+        if not self._can_read(modified_at, 8):
+            return None, None
+        modified = self._u64(modified_at)
+        if not 946684800_000000 <= modified <= 4102444800_000000:
+            return None, None
+        for offset in range(modified_at + 8, end - 7):
+            value = self._u64(offset)
+            if modified - 20 * 365 * 86400_000000 <= value <= modified + 1_000000:
+                return value, modified
+        return None, modified
+
     def _parse_new_stroke_object(
         self,
         layer: Dict[str, object],
@@ -684,6 +717,7 @@ class SpenNotesPageParser:
             "tail_value": tail_value,
             "pen_name": flexible_info.get("pen_name"),
             "advanced_setting": flexible_info.get("advanced_setting"),
+            "created_us": self._object_times_us(obj)[0],
         }
 
     def _extract_object_stroke_records(self) -> List[Dict[str, object]]:
@@ -2153,6 +2187,7 @@ class SpenNotesPageParser:
             "tail_value": tail_value,
             "pen_name": flexible_info.get("pen_name"),
             "advanced_setting": flexible_info.get("advanced_setting"),
+            "created_us": self._object_times_us(obj)[0],
         }
 
     def _parse_shape_image_info(self, subrecord: Dict[str, int]) -> Dict[str, object]:

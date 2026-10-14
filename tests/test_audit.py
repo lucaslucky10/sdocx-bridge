@@ -106,7 +106,7 @@ def test_rotated_pdf_writing_preserves_content(lib, tmp_path, rotation):
     annotated_pdf(source, rotation)
     n = lib.import_file(source)
     r = compose_document(lib, "A", pdf_id=n["id"], synthesize=False)
-    with fitz.open(lib.root / "exports" / r["export_id"] / "handwriting.pdf") as pdf:
+    with fitz.open(lib.root / "exports" / r["export_id"] / r["preview_pdf"]) as pdf:
         p = pdf[0]
         assert "KEEP ORIGINAL" in p.get_text()
         assert len(list(p.annots())) == 1 + r["strokes"]

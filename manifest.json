@@ -1,0 +1,107 @@
+{
+  "manifest_version": "0.4",
+  "name": "sdocx-bridge",
+  "display_name": "Inkbridge — 삼성노트·PDF 손글씨",
+  "version": "0.2.0",
+  "description": "Let Claude read Samsung Notes (.sdocx) and PDFs, transcribe note recordings locally, and write text into them as real pen strokes in your own handwriting.",
+  "long_description": "Inkbridge runs on your computer. Claude can open .sdocx and .pdf files from your Downloads, Documents and Desktop folders (and any folders you add), look at every page, read stroke timing, transcribe recordings with a free local Whisper model, and write text in your handwriting as vector ink: PDF ink annotations, or new strokes added to a copy of the Samsung Notes file. Originals are never modified and nothing is uploaded.",
+  "author": {
+    "name": "lucaslucky10",
+    "url": "https://github.com/lucaslucky10"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lucaslucky10/sdocx-bridge"
+  },
+  "homepage": "https://github.com/lucaslucky10/sdocx-bridge",
+  "support": "https://github.com/lucaslucky10/sdocx-bridge/issues",
+  "icon": "icon.png",
+  "server": {
+    "type": "uv",
+    "entry_point": "src/sdocx_bridge/__main__.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "${__dirname}",
+        "--extra",
+        "audio",
+        "--quiet",
+        "sdocx-bridge",
+        "--library",
+        "${user_config.library}",
+        "mcp",
+        "${user_config.extra_dirs}"
+      ],
+      "env": {
+        "SDOCX_BRIDGE_PROFILE_FILE": "${user_config.glyph_file}",
+        "PYTHONUTF8": "1"
+      }
+    }
+  },
+  "tools": [
+    {"name": "find_files", "description": "Find .sdocx/.pdf files in the allowed folders"},
+    {"name": "open_file", "description": "Import a note or PDF (the original is not changed)"},
+    {"name": "list_notes", "description": "List imported notes and PDFs"},
+    {"name": "get_note", "description": "Pages, typed text, recordings and attachments of a note"},
+    {"name": "view_page", "description": "Look at a page (optionally zoomed, with a coordinate grid)"},
+    {"name": "page_layout", "description": "Lines of writing and blank space on a page"},
+    {"name": "read_strokes", "description": "Stroke geometry and timing of a page"},
+    {"name": "search_notes", "description": "Search typed text across notes"},
+    {"name": "list_handwriting_profiles", "description": "Installed handwriting glyph dictionaries"},
+    {"name": "import_handwriting_profile", "description": "Install a glyphs.json handwriting dictionary"},
+    {"name": "recording_timeline", "description": "What was written during each minute of a recording"},
+    {"name": "transcribe_recording", "description": "Transcribe a recording locally with Whisper (free)"},
+    {"name": "get_transcript", "description": "Transcript sentences with the handwriting written at that moment"},
+    {"name": "write_handwriting", "description": "Write text as real pen strokes in your handwriting into a PDF, a note copy, or a new page"},
+    {"name": "view_output", "description": "Look at a written result"},
+    {"name": "export_note", "description": "Export a note as PDF, SVG, JSON, Markdown, or its recordings"},
+    {"name": "save_copy", "description": "Copy a result into an allowed folder"},
+    {"name": "learn_character", "description": "Teach a missing character from strokes in a note"}
+  ],
+  "prompts": [
+    {
+      "name": "read_handwriting",
+      "description": "Read every handwritten page of a note",
+      "arguments": ["note_id"],
+      "text": "Read all handwriting in note ${arguments.note_id}: view each page (zoom into dense areas) and transcribe it faithfully, page by page."
+    },
+    {
+      "name": "fill_missing_notes",
+      "description": "Transcribe the recording and fill what is missing from the notes in my handwriting",
+      "arguments": ["note_id"],
+      "text": "Transcribe the recording of note ${arguments.note_id}, compare it with the handwriting, and write what is missing near the related notes in my handwriting. Show me the result."
+    }
+  ],
+  "keywords": ["samsung notes", "sdocx", "handwriting", "pdf", "whisper", "transcription", "korean"],
+  "license": "AGPL-3.0-only",
+  "compatibility": {
+    "platforms": ["win32", "darwin", "linux"],
+    "runtimes": {
+      "python": ">=3.11"
+    }
+  },
+  "user_config": {
+    "library": {
+      "type": "directory",
+      "title": "작업 폴더 (Library folder)",
+      "description": "Where imported notes, transcripts and results are kept. Originals are never changed.",
+      "default": "${DOCUMENTS}/Inkbridge",
+      "required": false
+    },
+    "glyph_file": {
+      "type": "file",
+      "title": "내 손글씨 파일 glyphs.json (Handwriting glyphs)",
+      "description": "Your handwriting dictionary (glyphs.json). It stays on this computer and is installed as the 'my-handwriting' profile.",
+      "required": false
+    },
+    "extra_dirs": {
+      "type": "directory",
+      "title": "추가로 열 수 있는 폴더 (Extra folders)",
+      "description": "Downloads, Documents and Desktop are allowed already. Add folders such as a cloud-synced Samsung Notes folder.",
+      "multiple": true,
+      "required": false
+    }
+  }
+}

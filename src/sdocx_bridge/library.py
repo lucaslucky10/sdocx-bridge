@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import collections
+import math
 import errno
 import json
 import shutil
@@ -19,7 +20,10 @@ from .security import (
     export_transaction,
 )
 from .ink import check_ink, draw_pdf_ink, svg
+from .timing import recording_info
 
+# Bump when import output gains fields; older library entries are rebuilt on import.
+PARSER_VERSION = 2
 AUDIO = {".m4a", ".mp3", ".wav", ".aac", ".ogg", ".flac", ".amr", ".3gp"}
 
 
@@ -59,9 +63,12 @@ class Library:
         nid = digest[:24]
         destination = self.folder(nid)
         if (destination / "summary.json").exists():
-            return json.loads(
+            current = json.loads(
                 (destination / "summary.json").read_text(encoding="utf-8")
             )
+            if current.get("parser_version", 1) >= PARSER_VERSION:
+                return current
+            shutil.rmtree(destination)
         with tempfile.TemporaryDirectory(prefix="import-", dir=self.root) as tmp:
             stage = Path(tmp)
             original = stage / ("original" + source.suffix.lower())
@@ -70,6 +77,7 @@ class Library:
                 raise ValueError("Source changed during import; retry")
             note = {
                 "schema": "sdocx-bridge/1",
+                "parser_version": PARSER_VERSION,
                 "id": nid,
                 "title": display_name or source.stem,
                 "kind": source.suffix[1:].lower(),
@@ -128,6 +136,7 @@ class Library:
                         shutil.copyfile(path, stage / target)
                         if sha256(stage / target) != entry["sha256"]:
                             raise ValueError("Audio integrity mismatch")
+                        info = recording_info(stage / "raw", path.name)
                         note["audio"].append(
                             {
                                 "id": aid,
@@ -135,7 +144,10 @@ class Library:
                                 "path": target.as_posix(),
                                 "bytes": entry["bytes"],
                                 "sha256": entry["sha256"],
-                                "timing_alignment": "not decoded",
+                                "title": info["title"],
+                                "start_ms": info["start_ms"],
+                                "length_ms": info["length_ms"],
+                                "timing_source": info["timing_source"],
                             }
                         )
             summary = self.summarize(note)
@@ -159,6 +171,7 @@ class Library:
     @staticmethod
     def summarize(note):
         return {k: note[k] for k in ("id", "title", "kind", "sha256", "warnings")} | {
+            "parser_version": note.get("parser_version", 1),
             "pages": len(note["pages"]),
             "strokes": sum(len(p["strokes"]) for p in note["pages"]),
             "points": sum(
@@ -203,6 +216,9 @@ class Library:
                             "orientation": el.orientations,
                             "layer": el.layer_number,
                             "order": el.source_order,
+                            "created_us": (el.vendor_extensions or {})
+                            .get("samsung_notes", {})
+                            .get("created_us"),
                         }
                         if s["points"]:
                             item["strokes"].append(s)
@@ -255,69 +271,77 @@ class Library:
 
     def render_pdf(self, note_id, destination, annotations=True):
         note = self.get(note_id)
-        root = self.folder(note_id)
-        warnings = list(note["warnings"])
         if note["kind"] == "pdf":
             # Copy the complete document, including annotations, forms, links and metadata.
-            shutil.copyfile(root / "original.pdf", destination)
-            return warnings
+            shutil.copyfile(self.folder(note_id) / "original.pdf", destination)
+            return list(note["warnings"])
+        return self.render_note_pdf(note_id, destination, annotations=annotations)
+
+    def _draw_page(self, pdfpage, root, p, annotations, warnings):
+        objects = p.get("objects", [])
+        if p.get("background_pdf"):
+            objects = [
+                {
+                    "type": "pdf",
+                    "path": p["background_pdf"][0],
+                    "page": p["background_pdf"][1],
+                    "rect": [0, 0, p["width"], p["height"]],
+                }
+            ] + objects
+        for o in objects:
+            try:
+                if o["type"] == "image":
+                    pdfpage.insert_image(
+                        fitz.Rect(o["rect"]), filename=str(under(root, o["path"]))
+                    )
+                elif o["type"] == "pdf":
+                    with fitz.open(under(root, o["path"])) as bg:
+                        pdfpage.show_pdf_page(fitz.Rect(o["rect"]), bg, o["page"])
+                elif o["type"] == "text":
+                    pdfpage.insert_text(
+                        (o["x"], o["y"]),
+                        o["text"],
+                        fontsize=max(1, o["size"]),
+                        fontname="korea",
+                    )
+            except (RuntimeError, ValueError) as exc:
+                warnings.append(f"Object {o['type']} could not render: {exc}")
+        draw_pdf_ink(pdfpage, p["strokes"], annotations)
+
+    def render_note_pdf(self, note_id, destination, note=None, annotations=True):
+        """Render an SDOCX note (images, PDF backgrounds, typed text, ink) to PDF."""
+        note = note or self.get(note_id)
+        root = self.folder(note_id)
+        warnings = list(note["warnings"])
         with fitz.open() as pdf:
             for p in note["pages"]:
                 page = pdf.new_page(width=p["width"], height=p["height"])
-                objects = p.get("objects", [])
-                if p.get("background_pdf"):
-                    objects = [
-                        {
-                            "type": "pdf",
-                            "path": p["background_pdf"][0],
-                            "page": p["background_pdf"][1],
-                            "rect": [0, 0, p["width"], p["height"]],
-                        }
-                    ] + objects
-                for o in objects:
-                    try:
-                        if o["type"] == "image":
-                            page.insert_image(
-                                fitz.Rect(o["rect"]),
-                                filename=str(under(root, o["path"])),
-                            )
-                        elif o["type"] == "pdf":
-                            with fitz.open(under(root, o["path"])) as bg:
-                                page.show_pdf_page(fitz.Rect(o["rect"]), bg, o["page"])
-                        elif o["type"] == "text":
-                            page.insert_text(
-                                (o["x"], o["y"]),
-                                o["text"],
-                                fontsize=max(1, o["size"]),
-                                fontname="korea",
-                            )
-                    except (RuntimeError, ValueError) as exc:
-                        warnings.append(
-                            f"Page {len(pdf)} object {o['type']} could not render: {exc}"
-                        )
-                draw_pdf_ink(page, p["strokes"], annotations)
+                self._draw_page(page, root, p, annotations, warnings)
             if not len(pdf):
                 raise ValueError("No pages found")
             pdf.save(destination, garbage=4, deflate=True)
         return warnings
 
-    def preview(self, note_id, index, max_width=1200):
+    def preview(self, note_id, index, max_width=1200, region=None, grid=False, max_px=1600):
+        """PNG of one page (zero-based). region=[x0,y0,x1,y1] in page units zooms in;
+        grid draws labelled page coordinates so positions can be read off the image."""
         note = self.get(note_id)
         if not 0 <= index < len(note["pages"]):
-            raise ValueError("Page index out of range (zero-based)")
-        page = note["pages"][index]
-        scale = min(max_width / page["width"], 1600 / page["height"], 2)
-        if note["kind"] == "pdf":
-            with fitz.open(self.folder(note_id) / "original.pdf") as doc:
-                return (
-                    doc[index]
-                    .get_pixmap(matrix=fitz.Matrix(scale, scale))
-                    .tobytes("png")
-                )
+            raise ValueError(
+                f"Page out of range: this note has {len(note['pages'])} pages"
+            )
+        p = note["pages"][index]
         with fitz.open() as doc:
-            p = doc.new_page(width=page["width"], height=page["height"])
-            draw_pdf_ink(p, page["strokes"], False)
-            return p.get_pixmap(matrix=fitz.Matrix(scale, scale)).tobytes("png")
+            if note["kind"] == "pdf":
+                with fitz.open(self.folder(note_id) / "original.pdf") as src:
+                    doc.insert_pdf(src, from_page=index, to_page=index)
+                page = doc[0]
+                if page.rotation:
+                    page.remove_rotation()
+            else:
+                page = doc.new_page(width=p["width"], height=p["height"])
+                self._draw_page(page, self.folder(note_id), p, False, [])
+            return render_png(page, region, grid, max_px if region else max_width, max_px)
 
     def export(self, note_id, format):
         note = self.get(note_id)
@@ -385,17 +409,59 @@ class Library:
                         return result
         return result
 
-    def export_preview(self, export_id, index):
+    def export_preview(self, export_id, index, region=None, grid=False):
         folder = under(self.root / "exports", identifier(export_id))
         result = json.loads((folder / "result.json").read_text(encoding="utf-8"))
-        name = next(
-            (n for n in result["files"] if n in ("handwriting.pdf", "note.pdf")), None
+        name = result.get("preview_pdf") or next(
+            (n for n in result["files"] if n.endswith(".pdf")), None
         )
         if not name:
             raise ValueError("Export has no PDF preview")
         with fitz.open(folder / name) as pdf:
             if not 0 <= index < len(pdf):
-                raise ValueError("Page index out of range (zero-based)")
-            page = pdf[index]
-            scale = min(1200 / page.rect.width, 1600 / page.rect.height, 2)
-            return page.get_pixmap(matrix=fitz.Matrix(scale, scale)).tobytes("png")
+                raise ValueError(f"Page out of range: the result has {len(pdf)} pages")
+            return render_png(pdf[index], region, grid, 1600 if region else 1200, 1600)
+
+
+def render_png(page, region=None, grid=False, max_w=1200, max_h=1600):
+    """Rasterise a PyMuPDF page; optional zoom region and coordinate grid."""
+    w, h = page.rect.width, page.rect.height
+    clip = fitz.Rect(0, 0, w, h)
+    if region:
+        if len(region) != 4:
+            raise ValueError("region must be [x0, y0, x1, y1]")
+        clip = fitz.Rect(region) & fitz.Rect(0, 0, w, h)
+        if clip.is_empty or clip.width < 1 or clip.height < 1:
+            raise ValueError("region is outside the page")
+    if grid:
+        step = _grid_step(max(clip.width, clip.height))
+        shape = page.new_shape()
+        font = max(clip.width, clip.height) / 90
+        x = math.ceil(clip.x0 / step) * step
+        while x <= clip.x1:
+            shape.draw_line((x, clip.y0), (x, clip.y1))
+            x += step
+        y = math.ceil(clip.y0 / step) * step
+        while y <= clip.y1:
+            shape.draw_line((clip.x0, y), (clip.x1, y))
+            y += step
+        shape.finish(color=(0.2, 0.55, 0.95), width=font / 12, stroke_opacity=0.45)
+        x = math.ceil(clip.x0 / step) * step
+        while x <= clip.x1:
+            shape.insert_text((x + font * 0.2, clip.y0 + font * 1.1), f"{x:g}", fontsize=font, color=(0.1, 0.4, 0.85))
+            x += step
+        y = math.ceil(clip.y0 / step) * step
+        while y <= clip.y1:
+            if y > clip.y0 + font * 1.5:
+                shape.insert_text((clip.x0 + font * 0.2, y - font * 0.2), f"{y:g}", fontsize=font, color=(0.1, 0.4, 0.85))
+            y += step
+        shape.commit()
+    scale = min(max_w / clip.width, max_h / clip.height, 6 if region else 2)
+    return page.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=clip).tobytes("png")
+
+
+def _grid_step(span):
+    for step in (5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000):
+        if span / step <= 16:
+            return step
+    return 5000

@@ -1,6 +1,9 @@
 {
   "name": "hw-math",
   "private": true,
-  "description": "TeX -> SVG layout for the handwriting renderer",
+  "description": "TeX -> SVG layout for the handwriting renderer. tex2svg.bundle.js is built from tex2svg.bundle-entry.js and runs in the mini-racer V8 engine, so users need no Node.js.",
+  "scripts": {
+    "bundle": "npx -y esbuild@0.24.0 tex2svg.bundle-entry.js --bundle --minify --format=iife --platform=neutral --main-fields=main,module --outfile=tex2svg.bundle.js"
+  },
   "dependencies": { "mathjax-full": "3.2.2" }
 }

@@ -17,11 +17,10 @@
     </header>
     <main>
       <section class="intro">
-        <div class="eyebrow">YOUR NOTES, STILL YOUR INK</div>
-        <h1>내 필기에서,<br />다음 문장으로.</h1>
+        <h1>내 필기에서, 다음 문장으로.</h1>
         <p>
-          삼성노트의 손글씨와 녹음을 꺼내고,<br />내 글씨의 실제 획으로 PDF와 새
-          노트를 만드세요.
+          삼성노트의 손글씨와 녹음을 꺼내 읽고, 받아쓰고, 내 글씨의 실제 획으로
+          PDF와 노트에 이어 씁니다.
         </p>
       </section>
       <nav aria-label="작업 선택">
@@ -116,106 +115,98 @@
           <div class="panel">
             <div class="eyebrow">REAL VECTOR INK</div>
             <h2>내 손글씨로 쓰기</h2>
-            <p>
-              글자 사전의 좌표를 재사용합니다. PDF에는 편집 가능한 잉크 주석,
-              삼성노트에는 펜 획으로 들어갑니다.
+            <p class="hint">
+              글자 사전의 실제 획 좌표로 씁니다. PDF에는 편집 가능한 잉크 주석,
+              삼성노트에는 내 펜과 같은 펜 획으로 들어갑니다. 원본은 바뀌지 않습니다.
             </p>
             <label>내 글자 사전<select id="profile"></select></label>
             <p id="coverage" class="hint"></p>
             <label
               >쓸 내용<textarea
                 id="text"
-                rows="7"
-                placeholder="회전운동 방정식&#10;내 손글씨로 이어 쓰는 문장"
+                rows="6"
+                placeholder="회전운동 방정식&#10;수식은 $\tau = I\alpha$ 처럼 씁니다"
               ></textarea></label
             ><label
-              >배경 PDF<select id="pdf">
+              >어디에 쓸까요<select id="target">
                 <option value="">새 빈 노트 (A4)</option>
               </select></label
             >
             <div class="fields">
-              <label
-                >시작 쪽<input
-                  id="startPage"
-                  type="number"
-                  value="1"
-                  min="1" /></label
+              <label>쪽<select id="startPage"><option value="0">1</option></select></label
               ><label
                 >글자 높이<input
                   id="size"
                   type="number"
-                  value="22"
-                  min="3"
-                  max="200" /></label
+                  min="1"
+                  max="400"
+                  placeholder="자동" /></label
               ><label
-                >왼쪽 위치<input
-                  id="x"
-                  type="number"
-                  value="50"
-                  min="0" /></label
-              ><label
-                >위쪽 위치<input
-                  id="y"
-                  type="number"
-                  value="60"
-                  min="0" /></label
-              ><label
-                >쓰기 너비<input
-                  id="width"
-                  type="number"
-                  value="495"
-                  min="10" /></label
-              ><label
-                >변형 번호<input id="seed" type="number" value="7"
-              /></label>
+                >색<select id="color">
+                  <option value="">기본 (검정)</option>
+                  <option value="blue">파랑</option>
+                  <option value="red">빨강</option>
+                  <option value="green">초록</option>
+                </select></label
+              >
             </div>
-            <p class="hint">
-              위치·크기 단위는 PDF 포인트입니다. 72pt = 1인치. 선택한 PDF 크기에
-              맞게 조정하세요.
-            </p>
-            <label class="check"
-              ><input id="synth" type="checkbox" checked /> 사전에 없는 한글은
-              내 자모로 조합</label
-            ><button class="primary wide" id="write">
-              손글씨 파일 만들기 →
-            </button>
+            <details class="advanced">
+              <summary>위치를 숫자로 지정 · 고급</summary>
+              <div class="fields">
+                <label>왼쪽 x<input id="x" type="number" min="0" placeholder="자동" /></label
+                ><label>위쪽 y<input id="y" type="number" min="0" placeholder="자동" /></label
+                ><label>너비<input id="width" type="number" min="10" placeholder="자동" /></label
+                ><label>줄 간격<input id="lineSpacing" type="number" value="2.1" min="1" max="5" step="0.1" /></label
+                ><label>변형 번호<input id="seed" type="number" value="7" /></label>
+              </div>
+              <label class="check"
+                ><input id="synth" type="checkbox" checked /> 사전에 없는 한글은
+                내 자모로 조합</label
+              >
+              <p class="hint">단위는 그 페이지의 좌표입니다. PDF는 pt(72pt = 1인치), 삼성노트는 폭 약 1440입니다.</p>
+            </details>
+            <button class="primary wide" id="write">손글씨 파일 만들기 →</button>
           </div>
           <div class="panel result">
-            <h2>완성 파일</h2>
-            <div id="writeResult" class="empty">
-              생성하면 PDF · SDOCX · SVG · 획 JSON을<br />한 번에 받을 수
-              있습니다.
+            <div class="panel-title">
+              <h2 id="placeTitle">위치 고르기</h2>
+              <span class="hint" id="placeHint">새 노트는 왼쪽 위부터 씁니다.</span>
             </div>
-            <p class="hint">
-              그대로 쓴 글자와 자모를 조합한 글자를 구분해 알려드립니다. 없는
-              글자를 임의의 폰트로 대체하지 않습니다.
-            </p>
+            <div id="placer" class="paper placer">
+              <div class="empty">PDF나 노트를 고르면 그 쪽이 여기에 보입니다.<br /><small>쓸 자리를 드래그하면 위치와 너비가 정해집니다.</small></div>
+            </div>
+            <h2 class="result-title">완성 파일</h2>
+            <div id="writeResult" class="empty small-empty">
+              만들면 PDF · SDOCX · 미리보기를 받을 수 있습니다.
+            </div>
           </div>
         </div>
       </section>
       <section id="tab-connect" class="tab hidden">
         <div class="panel connect">
-          <div class="eyebrow">ONE LIBRARY, MANY ASSISTANTS</div>
-          <h2>Claude와 내 노트를 연결하세요.</h2>
+          <div class="eyebrow">CLAUDE · MCP</div>
+          <h2>Claude에게 말로 시키세요.</h2>
           <p>
-            표준 MCP로 노트 목록, 페이지 이미지, 원본 획, 녹음 추출, 글자 학습,
-            손글씨 생성을 제공합니다. 별도 API 키 없이 Claude Desktop / Claude
-            Code에서 사용할 수 있습니다.
+            Claude Desktop에 연결하면 Claude가 이 프로그램으로 노트를 열고, 손글씨를
+            읽고, 녹음을 받아쓰고, 내 손글씨로 써 줍니다. 별도 API 키나 추가 결제가
+            필요 없습니다.
           </p>
+          <h3>가장 쉬운 연결 (Windows · macOS)</h3>
           <ol>
-            <li>프로그램을 설치한 환경에서 아래 명령을 실행합니다.</li>
-            <li>출력된 설정을 Claude Desktop의 MCP 설정에 추가합니다.</li>
-            <li>Claude를 재시작한 다음, 아래처럼 요청하세요.</li>
+            <li>GitHub 릴리스에서 <b>sdocx-bridge-버전.mcpb</b>를 내려받습니다.</li>
+            <li>파일을 두 번 클릭하거나 Claude Desktop의 설정 → 확장 프로그램에 끌어다 놓고 설치합니다.</li>
+            <li>설정 화면에서 <b>내 손글씨 파일(glyphs.json)</b>을 고릅니다. 작업 폴더는 기본값(문서\Inkbridge)이면 이 화면과 같은 보관함을 씁니다.</li>
           </ol>
-          <pre>sdocx-bridge --library "내 보관함 경로" claude-config</pre>
-          <blockquote>
-            내 삼성노트 목록을 보여줘. 첫 번째 노트의 필기를 읽고, 학습된 내
-            손글씨로 요약을 새 PDF와 삼성노트 파일로 만들어줘.
-          </blockquote>
+          <h3>확장 설치가 안 되면</h3>
+          <p>이 프로그램 폴더의 <b>connect-claude.cmd</b>를 실행하세요. 명령어로는 <code>uv run sdocx-bridge install-claude</code> 입니다.</p>
+          <p class="hint">Claude Desktop 설정 파일에 연결 항목을 추가하고 기존 설정은 백업합니다. Claude를 완전히 종료했다가 다시 여세요.</p>
+          <h3>이렇게 말해 보세요</h3>
+          <blockquote>다운로드 폴더의 회전운동.pdf 3페이지 오른쪽 위에 “토크 = 회전시키는 힘”을 내 손글씨로 작게 써 줘.</blockquote>
+          <blockquote>a.sdocx의 손글씨를 모두 읽고, 녹음을 받아써서 내가 필기하지 못한 내용을 빈 곳에 내 손글씨로 채워 줘.</blockquote>
+          <blockquote>8강 노트의 녹음 파일만 따로 꺼내 줘.</blockquote>
           <p class="hint">
-            MCP 도구를 사용하면 선택한 노트 내용이 Claude에 전달됩니다. 웹 화면
-            자체는 외부로 파일을 전송하지 않습니다. 상세 설치법과 읽기 전용
-            모드는 저장소의 docs/CLAUDE.md를 확인하세요.
+            Claude가 도구를 쓰면 그 결과(페이지 이미지, 받아쓴 글)가 Claude 대화에 전달됩니다.
+            이 화면 자체는 외부로 아무것도 보내지 않습니다. 자세한 내용은 저장소의 docs/CLAUDE.md를 보세요.
           </p>
         </div>
       </section>
