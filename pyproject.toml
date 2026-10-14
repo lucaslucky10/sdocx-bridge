@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sdocx-bridge"
+version = "0.1.0"
+description = "Local Samsung Notes workspace, real-ink handwriting and Claude MCP bridge"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE", "third_party/*"]
+dependencies = ["numpy>=1.26,<3", "pillow>=10,<13", "PyMuPDF>=1.26,<2", "kaitaistruct==0.11", "matplotlib>=3.8,<4", "fastapi>=0.115,<1", "uvicorn>=0.30,<1", "python-multipart>=0.0.20,<1", "mcp>=1.26,<2"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "httpx>=0.28,<1", "build>=1,<2"]
+
+[project.scripts]
+sdocx-bridge = "sdocx_bridge.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["sdocx_bridge*", "handwriting_engine*", "note_pipeline*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+sdocx_bridge = ["static/*"]
+handwriting_engine = ["math/*.js", "math/*.json", "math/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

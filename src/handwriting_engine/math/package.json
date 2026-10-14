@@ -1,0 +1,6 @@
+{
+  "name": "hw-math",
+  "private": true,
+  "description": "TeX -> SVG layout for the handwriting renderer",
+  "dependencies": { "mathjax-full": "3.2.2" }
+}
