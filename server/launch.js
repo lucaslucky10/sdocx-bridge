@@ -85,6 +85,18 @@ try {
   log(`could not copy program files: ${e.stack || e}`);
   process.exit(1);
 }
+// Claude Desktop may leave ${...} placeholders unreplaced (seen on Windows: "${DOCUMENTS}/Inkbridge").
+function documentsDir() {
+  for (const d of [path.join(home, "OneDrive", "Documents"), path.join(home, "OneDrive", "문서"), path.join(home, "Documents")]) {
+    if (fs.existsSync(d)) return d;
+  }
+  return path.join(home, "Documents");
+}
+function fill(value) {
+  return value.replace(/\$\{(DOCUMENTS|HOME|DESKTOP|DOWNLOADS)\}/g, (_, k) =>
+    k === "DOCUMENTS" ? documentsDir() : k === "HOME" ? home : path.join(home, k === "DESKTOP" ? "Desktop" : "Downloads"));
+}
+const cliArgs = process.argv.slice(2).map(fill).filter((a) => !a.includes("${"));
 const env = {
   ...process.env,
   UV_PYTHON_INSTALL_DIR: path.join(base, "python"),
@@ -93,15 +105,32 @@ const env = {
   UV_PYTHON_PREFERENCE: "only-managed",
   UV_LINK_MODE: "copy",
   PYTHONUTF8: "1",
+  PYTHONUNBUFFERED: "1",
 };
-const args = ["run", "--directory", project, "--extra", "audio", "--quiet", "sdocx-bridge", ...process.argv.slice(2)];
+for (const k of Object.keys(env)) {
+  if (k.startsWith("SDOCX_BRIDGE_") && typeof env[k] === "string") {
+    env[k] = fill(env[k]);
+    if (!env[k] || env[k].includes("${")) delete env[k];
+  }
+}
+const args = ["run", "--directory", project, "--extra", "audio", "--quiet", "sdocx-bridge", ...cliArgs];
 log(`start: ${uv} ${args.join(" ")}`);
-// stdin/stdout carry the MCP messages; stderr is shown in Claude's log and kept in launch.log.
-const child = spawn(uv, args, { env, stdio: ["inherit", "inherit", "pipe"], windowsHide: true });
+// The MCP messages are relayed through pipes instead of handing our stdin/stdout to the
+// child: under Claude Desktop's built-in Node on Windows the inherited stdin reached
+// Python already closed, so the server saw end-of-input and quit with code 0.
+const child = spawn(uv, args, { env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+let toServer = 0, fromServer = 0;
+process.stdin.on("data", (d) => { toServer += d.length; child.stdin.write(d); });
+process.stdin.on("end", () => { log(`Claude closed the connection (${toServer} bytes in, ${fromServer} out)`); child.stdin.end(); });
+child.stdin.on("error", () => {});
+child.stdout.on("data", (d) => { fromServer += d.length; process.stdout.write(d); });
 child.stderr.on("data", (d) => {
   process.stderr.write(d);
   try { fs.appendFileSync(logFile, d); } catch (_) {}
 });
 child.on("error", (e) => { log(`could not start uv: ${e.message}`); process.exit(1); });
-child.on("exit", (code, signal) => { log(`exited with ${code ?? signal}`); process.exit(code ?? (signal ? 1 : 0)); });
+child.on("exit", (code, signal) => {
+  log(`exited with ${code ?? signal} (${toServer} bytes in, ${fromServer} out)`);
+  process.exit(code ?? (signal ? 1 : 0));
+});
 for (const s of ["SIGINT", "SIGTERM"]) process.on(s, () => child.kill(s));
