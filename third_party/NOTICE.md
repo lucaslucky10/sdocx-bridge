@@ -18,6 +18,12 @@
 - Changes: package-local MathJax helper path, bounded subprocess timeout and explicit math error reporting; visual-line metadata for intact pagination and stroke order; runtime compatibility fixes documented in source.
 - No personal glyph database, note labels, source SDOCX, media or handwriting images are included.
 
+## MathJax
+
+- URL: https://github.com/mathjax/MathJax-src, package `mathjax-full` 3.2.2
+- Bundled file: `src/handwriting_engine/math/tex2svg.bundle.js`, built from `tex2svg.bundle-entry.js` with esbuild 0.24.0 (`npm run bundle` in that folder). Unmodified MathJax code, minified.
+- License: Apache-2.0, retained in `MathJax-LICENSE`.
+
 ## Dependencies
 
-PyMuPDF is AGPL-3.0/commercial dual-licensed; this project uses its AGPL option. NumPy, Pillow, FastAPI, Uvicorn, MCP SDK, Kaitai Struct, Matplotlib and optional MathJax retain their own licenses. Dependency wheels and Node modules are not vendored into the source release. Install them from their package registries. See `pyproject.toml` and the optional math package manifest.
+PyMuPDF is AGPL-3.0/commercial dual-licensed; this project uses its AGPL option. NumPy, Pillow, FastAPI, Uvicorn, MCP SDK, Kaitai Struct, Matplotlib, mini-racer (V8) and the optional faster-whisper/PyAV retain their own licenses. Apart from the MathJax bundle above, dependency wheels and Node modules are not vendored into the source release. Install them from their package registries. See `pyproject.toml` and the optional math package manifest.

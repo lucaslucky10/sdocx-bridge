@@ -15,22 +15,34 @@ from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 from filelock import Timeout as LockTimeout
 
+from . import __version__
 from .library import Library
 from .security import MAX_UPLOAD, identifier, under
 from .handwriting import import_profile, profiles, learn_glyph, compose_document
+from .layout import page_layout
+from . import transcribe as stt
 
 
 class WriteRequest(BaseModel):
     text: str = Field(min_length=1, max_length=20000)
     profile: str = "my-handwriting"
     pdf_id: str | None = None
+    target_id: str | None = None
     page_index: int = Field(default=0, ge=0)
-    x: float = 50
-    y: float = 60
-    size: float = 22
-    width: float = 495
+    x: float | None = None
+    y: float | None = None
+    size: float | None = None
+    width: float | None = None
     seed: int = 7
     synthesize: bool = True
+    color: str | None = None
+    line_spacing: float = 2.1
+    make_sdocx: bool | None = None
+
+
+class TranscribeRequest(BaseModel):
+    model: str = "turbo"
+    language: str = "ko"
 
 
 class LabelRequest(BaseModel):
@@ -44,7 +56,7 @@ class LabelRequest(BaseModel):
 def create_app(root, token=None):
     app = FastAPI(
         title="SDOCX Bridge",
-        version="0.1.1",
+        version=__version__,
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
@@ -177,6 +189,24 @@ def create_app(root, token=None):
         return FileResponse(
             under(library.folder(note_id), entry["path"]), filename=entry["name"]
         )
+
+    @app.get("/api/notes/{note_id}/pages/{index}/layout")
+    def layout(note_id: str, index: int):
+        return page_layout(library.page(note_id, index))
+
+    @app.post("/api/notes/{note_id}/audio/{audio_id}/transcribe")
+    def transcribe_start(note_id: str, audio_id: str, data: TranscribeRequest):
+        current = stt.status(library, note_id, identifier(audio_id))
+        if current["state"] in ("done", "transcribing", "downloading model", "starting"):
+            return current
+        return stt.start(library, note_id, audio_id, data.model, data.language)
+
+    @app.get("/api/notes/{note_id}/audio/{audio_id}/transcript")
+    def transcript(note_id: str, audio_id: str):
+        state = stt.status(library, note_id, identifier(audio_id))
+        if state["state"] != "done":
+            return state | {"available": stt.available()}
+        return {"state": "done"} | stt.transcript(library, note_id, audio_id, 0, 2000)
 
     @app.post("/api/notes/{note_id}/export/{format}")
     def export(note_id: str, format: str):

@@ -1,101 +1,79 @@
 # Inkbridge · SDOCX Bridge
 
-**삼성노트의 실제 획을 읽고, 내 글씨로 새 노트를 쓰고, Claude에 연결하는 로컬 오픈소스 작업실.**
+**삼성노트(.sdocx)와 PDF를 Claude가 직접 읽고, 녹음을 받아쓰고, 내 손글씨 획으로 써 넣게 해 주는 로컬 프로그램.**
 
-Local Samsung Notes interoperability: SDOCX inspection, lossless audio extraction, personal handwriting composition, editable PDF ink, native SDOCX strokes, and a standard MCP server.
+Claude에게 이렇게 말하면 됩니다.
 
-## 바로 시작
+> 다운로드 폴더의 `회전운동.pdf` 3페이지 오른쪽 위에 "관성모멘트 $I=\sum mr^2$" 를 내 손글씨로 작게 넣어줘.
 
-Python 3.11 이상이 필요합니다. Windows에서는 저장소를 내려받고 `start.cmd`를 실행하세요. 첫 실행은 가상환경과 필요한 패키지를 설치합니다. 브라우저에서 **http://127.0.0.1:8765** 를 엽니다.
+> `8강.sdocx`의 손글씨를 전부 읽어 줘. 그리고 녹음을 받아써서 내가 필기 못 한 내용을 관련 필기 옆에 내 손글씨로 채워 줘.
 
-```powershell
-git clone https://github.com/lucaslucky10/sdocx-bridge.git
-cd sdocx-bridge
-python -m venv .venv
-.venv\Scripts\python -m pip install -e .
-.venv\Scripts\python -m sdocx_bridge --library ./library web
-```
+Claude는 파일을 찾아 열고, 페이지를 눈으로 보고, 녹음을 이 컴퓨터에서 무료로 받아쓰고(Whisper), 강의 중 **그 문장이 나올 때 무엇을 쓰고 있었는지**를 획의 작성 시각으로 맞춰 본 뒤, 빈 자리에 내 글씨를 **실제 펜 획**으로 써 넣습니다. 원본 파일은 바꾸지 않고 새 파일을 만듭니다.
 
-macOS/Linux: `python3 -m venv .venv`, `.venv/bin/python -m pip install -e .`, `.venv/bin/python -m sdocx_bridge --library ./library web`.
+## 설치 (Windows, Python 설치 필요 없음)
 
-파일은 로컬 보관함에 저장됩니다. 웹 화면은 외부 API·분석 서비스·CDN을 사용하지 않습니다. MCP로 읽은 내용은 연결한 AI 서비스에 전달될 수 있습니다.
+### 1. Claude에 연결하기 — 권장
 
-## 가능한 작업
+1. [Claude Desktop](https://claude.ai/download)을 설치하고 로그인합니다.
+2. [최신 릴리스](https://github.com/lucaslucky10/sdocx-bridge/releases/latest)에서 `sdocx-bridge-<버전>.mcpb` 를 내려받아 **더블클릭**합니다. Claude 설정의 확장 프로그램 화면이 열리면 **설치**를 누릅니다.
+3. 설정 화면에서 **내 손글씨 파일 glyphs.json** 에 `my-handwriting/data/glyphs.json` 을 고릅니다. 작업 폴더는 기본값(`문서\Inkbridge`)으로 두면 됩니다.
+4. 처음 켤 때 Claude가 Python과 필요한 패키지를 자동으로 내려받습니다(인터넷 필요, 몇 분). 그다음부터는 바로 켜집니다.
 
-| 작업 | 구현 범위 |
+다운로드·문서·바탕 화면 폴더의 파일은 바로 열 수 있습니다. 다른 폴더는 설정의 **추가로 열 수 있는 폴더**에 넣으세요.
+
+> `.mcpb` 설치가 안 되는 Claude 버전이라면: 저장소 ZIP을 풀고 `connect-claude.cmd` 를 실행한 뒤 Claude를 완전히 종료했다가 다시 켭니다. 자세한 내용과 Claude Code 연결은 [연결 가이드](docs/CLAUDE.md).
+
+### 2. 브라우저 화면 쓰기 (선택)
+
+릴리스의 `sdocx-bridge-<버전>-windows.zip` 을 풀고 `start.cmd` 를 실행하면 http://127.0.0.1:8765 가 열립니다. 첫 실행은 실행 도구(uv)와 패키지를 설치합니다. Claude 확장과 같은 작업 폴더(`문서\Inkbridge`)를 씁니다.
+
+macOS/Linux: [uv](https://docs.astral.sh/uv/)를 설치한 뒤 저장소 폴더에서 `uv run --extra audio sdocx-bridge web`.
+
+## 할 수 있는 일
+
+| 작업 | 내용 |
 |---|---|
-| 노트 가져오기 | 여러 SDOCX/PDF 업로드, SHA-256 중복 확인, 원본 보관 |
-| 획 분석 | 페이지·좌표·색·굵기·필압·시간·기울기·방향 채널, 저장 순서 재생 |
-| 녹음 추출 | M4A/MP3/WAV/AAC/OGG/FLAC/AMR/3GP를 재인코딩 없이 추출, 원본 해시 검증 |
-| 내보내기 | JSON, 획 SVG, PDF 잉크 주석, 입력된 텍스트 Markdown, 녹음 |
-| 내 글씨 사전 | 기존 `my-handwriting/data/glyphs.json` 가져오기, 획 클릭·영역 선택 후 글자 라벨링 |
-| 텍스트 → 내 글씨 | 글자 변형 선택, 한글 자모 조합, 줄바꿈, 여러 페이지, 재현 가능한 seed |
-| PDF 위에 쓰기 | 시작 쪽·위치·크기·너비 지정. 기존 PDF를 보존하고 `/Ink` 주석 추가 |
-| 새 삼성노트 | 이미지로 붙이는 글씨가 아닌 **native pen stroke** 객체로 SDOCX 생성 |
-| Claude/다른 AI | 표준 stdio MCP 도구 10개, 노트 리소스, 받아쓰기 프롬프트, 읽기 전용 모드 |
-| 수식 | 선택 설치한 MathJax 조판으로 `$...$` LaTeX를 내 글자 획으로 배치 |
+| 노트 읽기 | 페이지 이미지(확대·좌표 격자), 획 좌표·색·필압·**작성 시각**, 입력된 텍스트, 첨부 이미지·PDF 배경 |
+| 녹음 | 녹음 추출(재인코딩 없음), 제목·길이·**녹음 시작 시각** 해석, 무료 로컬 받아쓰기(faster-whisper `large-v3-turbo`, CPU) |
+| 녹음 ↔ 필기 맞추기 | 받아쓴 문장마다 그때(±5초) 쓴 필기의 페이지와 위치, 필기가 없던 구간 표시 |
+| 내 글씨로 쓰기 | 글자 변형 선택, 한글 자모 조합, LaTeX 수식(`$...$`), 색, 크기, 위치·너비 지정 |
+| PDF에 쓰기 | 원본 PDF를 보존한 복사본에 `/Ink` 주석(벡터 획)으로 추가 |
+| 삼성노트에 쓰기 | **기존 .sdocx 복사본에 새 펜 획 객체를 추가**. 녹음·이미지·다른 페이지는 바이트 그대로 유지하고 무결성 해시를 다시 계산. 글씨 크기는 그 노트의 내 글씨 크기에 자동으로 맞춤 |
+| 빈 자리 찾기 | 페이지의 필기 줄과 빈 영역, 평소 글자 높이 |
+| 새 노트 | 내 글씨로 새 PDF/SDOCX 생성 |
+| 글자 학습 | 노트의 획을 골라 없는 글자를 사전에 추가 |
 
-### 내 글씨로 쓰기
+## Claude 도구
 
-1. **노트 보관함**에 SDOCX/PDF를 올립니다.
-2. 기존 프로젝트의 `data/glyphs.json`을 가져옵니다. 기본 사전 이름은 `my-handwriting`입니다. 이 저장소에는 개인 글자 사전이 포함되어 있지 않습니다.
-3. 사전이 없다면 노트에서 한 글자의 획들을 선택하고 정답 한 글자를 입력해 학습합니다. 라틴 문자·문장부호의 기준선은 현재 단순 높이 정규화이므로 검수가 필요합니다.
-4. **손글씨 쓰기**에서 사전과 PDF를 고르고 내용을 입력합니다.
-5. PDF, SDOCX, SVG, JSON을 다운로드합니다. 사전에 없고 조합할 수 없는 글자는 생성 전에 오류로 알려줍니다.
+`find_files` · `open_file` · `list_notes` · `get_note` · `view_page` · `page_layout` · `read_strokes` · `search_notes` · `recording_timeline` · `transcribe_recording` · `get_transcript` · `list_handwriting_profiles` · `import_handwriting_profile` · `write_handwriting` · `view_output` · `export_note` · `save_copy` · `learn_character`
 
-원본과 같은 획 샘플을 재사용하지만 문장 전체를 똑같이 썼다고 보장하지 않습니다. 기존 사전의 품질·라벨 정확도에 영향을 받으며, 합성 한글/기호를 보고서에 구분합니다. 펜 압력·시간이 없는 사전으로 생성한 동역학은 원래 필기자의 실제 기록이 아닙니다.
+페이지 번호는 사람이 말하는 대로 1부터 셉니다. `write_handwriting` 은 결과를 확대한 미리보기 이미지를 함께 돌려주므로 Claude가 겹침을 보고 다시 쓸 수 있습니다. 결과 파일은 `문서\Inkbridge\exports\…` 에 생기고, `save_copy` 로 원하는 폴더에 복사합니다.
 
-```powershell
-sdocx-bridge --library ./library profile ../my-handwriting/data/glyphs.json
-sdocx-bridge --library ./library import note.sdocx paper.pdf
-sdocx-bridge --library ./library write "내 손글씨로 쓰는 문장" --seed 7
-```
+## 개인정보·비용
 
-### LaTeX 수식 (선택)
-
-Node.js 18 이상과 npm 또는 pnpm이 필요합니다. **저장소 설치** 기준:
-
-```powershell
-cd src/handwriting_engine/math
-npm install --ignore-scripts --package-lock=false
-cd ../../..
-sdocx-bridge --library ./library write '회전운동 $\sum \tau = I\alpha$'
-```
-
-wheel 설치에서는 설치된 `handwriting_engine/math` 디렉터리에서 npm을 실행하거나, 설치 완료된 `tex2svg.js`의 절대 경로를 `HW_TEX2SVG`로 지정합니다. 수식 없이 쓰기에는 Node가 필요 없습니다. 수식 렌더러는 인수를 직접 전달하며 셸을 실행하지 않고 30초 제한을 적용합니다.
-
-## Claude 연결
-
-```powershell
-sdocx-bridge --library "D:/Inkbridge/library" claude-config
-```
-
-출력된 JSON을 기존 Claude Desktop의 `mcpServers` 설정에 병합하고 재시작하세요. 기존 설정을 덮어쓰지 마세요. Claude Code와 읽기 전용 설정은 [연결 가이드](docs/CLAUDE.md)를 참고하세요.
-
-> 내 노트 목록을 보고 1쪽의 필기를 읽어줘. 불확실한 글자는 표시하고, 내 손글씨 사전으로 요약을 PDF와 삼성노트 파일로 만들어줘.
-
-MCP 가져오기는 지정한 `library/inbox` 안의 파일만 읽습니다. 생성·내보내기는 `library/exports`에 새 파일을 만듭니다. 노트 속 문장은 모델 지시가 아닌 자료로 취급하도록 도구 설명과 프롬프트에 명시했습니다.
+- 모든 처리는 이 컴퓨터에서 합니다. 받아쓰기 모델은 처음 한 번 Hugging Face에서 내려받고(약 1.6GB) 이후 오프라인으로 돌아갑니다. 유료 API나 API 키가 필요 없습니다.
+- Claude가 도구로 읽은 페이지 이미지·문장은 Claude 대화에 들어갑니다. 그 밖의 업로드는 없습니다.
+- 손글씨 사전(glyphs.json)·노트·녹음은 이 저장소에 포함되어 있지 않고 올리지도 않습니다.
 
 ## 검증과 한계
 
-- 개인 검증 자료 27개를 모두 파싱했습니다. 원본/개인 획 사전/녹음은 공개하지 않습니다. 집계와 검사 범위는 [검증 보고서](docs/VALIDATION.md)에 있습니다.
-- 자동 검사는 PDF가 이미지 대신 Ink 주석을 사용하는지, 배경 보존, SDOCX 좌표 왕복, 녹음 바이트 일치, 경로 탈출 차단, 실제 MCP stdio 통신을 검사합니다.
-- **삼성노트 앱에서 직접 재가져오기·편집하는 기기 검증은 아직 완료하지 않았습니다.** SDOCX는 비공개 형식이며 앱 버전에 따라 호환성이 달라질 수 있습니다.
-- PDF 출력에서는 원래 PDF 내용을 유지합니다. **SDOCX 출력의 PDF 배경만** PNG로 변환합니다. 그 위의 손글씨는 독립적인 펜 획입니다.
-- 노트 미리보기/SVG는 획 중심입니다. SPI 미리보기 타일, 모든 펜 효과, 도형, 지우개, 음성-획 동기화, 녹음 자동 전사는 지원하지 않습니다. 원본 구조는 `raw/`에 보존합니다.
-- PDF/SVG의 선 굵기는 획별 일정합니다. 가져온 원본의 필압·시간 채널은 JSON에 보관하지만 Samsung의 펜 렌더러와 동일한 표현은 아닙니다.
-- Markdown/검색은 입력된 텍스트만 사용합니다. 손글씨 OCR을 했다고 표시하지 않습니다. Claude는 페이지 이미지를 보고 읽을 수 있습니다.
-- 회전된 PDF는 출력 복사본에서 화면 모양을 유지하며 정규화합니다. 기존 주석·링크를 보존하고, 공간을 초과하면 오류를 내며 글자를 잘라 내지 않습니다. 완성 화면에서 쪽별 배경과 손글씨를 함께 확인할 수 있습니다.
-- 비공개 자료 27개 성공이 모든 SDOCX 버전의 호환성이나 다른 프로젝트보다 높은 정확도를 증명하지 않습니다. [기능 비교·출처](docs/COMPARISON.md)를 참조하세요.
+자세한 내용은 [검증 보고서](docs/VALIDATION.md).
+
+- 비공개 노트 30개(116쪽, 획 76,524개)를 모두 읽었고, 모든 획의 작성 시각을 해석했습니다. 30개 모두에 획을 추가한 복사본을 만들고 다시 읽어 확인했습니다.
+- 실제 강의 녹음(15분 32초)을 받아쓰기해, 문장과 그때 쓴 필기가 맞게 연결되는지 페이지 화면으로 확인했습니다.
+- **삼성노트 앱에서 결과 .sdocx를 여는 것은 아직 실기기로 확인하지 못했습니다.** 형식은 비공개이며 역분석에 기반합니다. 앱이 미리보기 캐시를 보여 줄 가능성이 있습니다.
+- **Claude Desktop에서 .mcpb 설치는 아직 실제 앱으로 확인하지 못했습니다.** 같은 명령(`uv run …`)으로 서버를 띄워 MCP 클라이언트로 끝까지 실행하는 것은 확인했습니다. uv 런타임 확장은 Claude Desktop에서 실험 기능입니다.
+- 손글씨 인식(OCR) 기능은 따로 없습니다. Claude가 페이지 이미지를 보고 읽습니다.
+- 받아쓰기는 CPU로 돌아가서 시간이 걸립니다. 테스트 서버(4코어)에서 15분 32초 녹음에 약 6분이 걸렸고, 컴퓨터마다 다릅니다. Windows ARM 기기는 받아쓰기 패키지가 없어 받아쓰기를 쓸 수 없습니다.
+- 삼성노트 쓰기는 한 번에 한 페이지, 레이어가 하나인 페이지에만 합니다.
 
 ## 개발
 
-```powershell
-python -m pip install -e ".[dev]"
-python -m pytest -q
-python -m build
+```bash
+uv sync --extra audio --extra dev
+uv run pytest -q
 ```
 
-`src/sdocx_bridge`: 라이브러리·API·UI·MCP. `src/note_pipeline`: MIT Dietrich 기반 파서/작성기. `src/handwriting_engine`: 저장소 소유자의 기존 손글씨 조판 코드. [변경·출처 기록](third_party/NOTICE.md).
+`src/sdocx_bridge`: 보관함·MCP·웹·삼성노트 쓰기·녹음 정렬. `src/note_pipeline`: MIT Dietrich 기반 파서. `src/handwriting_engine`: 저장소 소유자의 손글씨 조판 코드와 MathJax 번들. [출처·변경 기록](third_party/NOTICE.md), [파일 형식 메모](docs/FORMAT.md), [다른 프로젝트와 비교](docs/COMPARISON.md).
 
-AGPL-3.0-only. 포함된 MIT 코드의 라이선스는 유지됩니다. Samsung Notes는 Samsung Electronics의 상표이며 이 프로젝트는 삼성 또는 Anthropic의 공식 제품이 아닙니다.
+AGPL-3.0-only. 포함된 MIT·Apache-2.0 코드의 라이선스는 유지됩니다. Samsung Notes는 Samsung Electronics의 상표이며, 이 프로젝트는 삼성이나 Anthropic의 공식 제품이 아닙니다.

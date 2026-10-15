@@ -2,12 +2,14 @@
 
 Units: 1.0 = height of one Hangul syllable ("u"). Output coordinates are in u, y down, baseline-based.
 """
+import atexit
 import json
 import math
 import os
 import random
 import re
 import subprocess
+import threading
 import unicodedata
 import xml.etree.ElementTree as ET
 
@@ -296,18 +298,69 @@ def _parse_transform(t):
     return M
 
 
-def tex_layout(tex, display=False):
-    """Typeset with MathJax. Returns list of items in em/1000 units (y up):
-    ('glyph', char, origin_x, origin_y, scale, bbox) and ('rule', x0, y0, x1, y1)."""
+BUNDLE = os.path.join(HERE, 'math', 'tex2svg.bundle.js')
+_V8 = None
+_V8_POOL = None
+_V8_LOCK = threading.Lock()
+
+
+def _tex_svg_v8(tex, display):
+    """MathJax inside the embedded V8 of the mini-racer wheel: no Node.js install needed.
+
+    Runs on its own thread: mini-racer refuses timeouts on a thread with a running
+    asyncio loop, which is where MCP tool calls execute.
+    """
+    global _V8, _V8_POOL
+    from concurrent.futures import ThreadPoolExecutor
+
+    from py_mini_racer import MiniRacer
+
+    def run():
+        global _V8
+        if _V8 is None:
+            ctx = MiniRacer()
+            with open(BUNDLE, encoding='utf-8') as f:
+                ctx.eval(f.read())
+            atexit.register(ctx.close)  # V8 threads otherwise keep the interpreter alive
+            _V8 = ctx
+        return _V8.call('tex2svg', tex, bool(display), timeout_sec=30)
+
+    with _V8_LOCK:
+        if _V8_POOL is None:
+            _V8_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix='mathjax')
+            atexit.register(_V8_POOL.shutdown, wait=False)
+    return _V8_POOL.submit(run).result()
+
+
+def _tex_svg_node(tex, display):
     try:
-        out = subprocess.run(['node', TEX2SVG, tex, 'display' if display else 'inline'],
-                             capture_output=True, text=True, encoding='utf-8', timeout=30, check=True).stdout
+        return subprocess.run(['node', TEX2SVG, tex, 'display' if display else 'inline'],
+                              capture_output=True, text=True, encoding='utf-8', timeout=30, check=True).stdout
     except FileNotFoundError as exc:
-        raise ValueError('LaTeX needs Node.js and the optional MathJax installation; see README.') from exc
+        raise ValueError('LaTeX needs the mini-racer package (pip install mini-racer) or Node.js with MathJax; see README.') from exc
     except subprocess.TimeoutExpired as exc:
         raise ValueError('LaTeX layout exceeded 30 seconds; simplify the formula.') from exc
     except subprocess.CalledProcessError as exc:
         raise ValueError('LaTeX renderer failed. Check the optional MathJax installation and formula.') from exc
+
+
+def tex_layout(tex, display=False):
+    """Typeset with MathJax. Returns list of items in em/1000 units (y up):
+    ('glyph', char, origin_x, origin_y, scale, bbox) and ('rule', x0, y0, x1, y1)."""
+    try:
+        import py_mini_racer  # noqa: F401
+        v8 = os.path.isfile(BUNDLE) and 'HW_TEX2SVG' not in os.environ
+    except ImportError:
+        v8 = False
+    if v8:
+        try:
+            out = _tex_svg_v8(tex, display)
+        except ValueError:
+            raise
+        except Exception as exc:  # JS exceptions/timeouts from the embedded engine
+            raise ValueError(f'LaTeX renderer failed: {str(exc)[:200]}') from exc
+    else:
+        out = _tex_svg_node(tex, display)
     try:
         root = ET.fromstring(out)
     except ET.ParseError as exc:

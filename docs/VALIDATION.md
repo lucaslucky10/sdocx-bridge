@@ -1,4 +1,55 @@
-# Validation — 2026-10-15
+> 0.2.7: 0.2.6은 사용자 Windows PC에서 복사와 시작까지는 됐지만 서버가 몇 초 만에 코드 0으로 끝났습니다(launch.log). 입력이 닫힌 것으로 보고, 표준 입출력을 자식 프로세스에 넘기지 않고 파이프로 중계하도록 바꿨습니다(원인은 추정, 다음 로그의 바이트 수로 확인). 치환되지 않은 `${DOCUMENTS}` 같은 값도 직접 채웁니다. Linux에서 MCP 클라이언트로 확인, Windows 미확인.
+
+> 0.2.6: 0.2.5는 일부 Windows에서 프로그램 복사(fs.cpSync → CopyFile2)가 EPERM/UNKNOWN으로 실패했습니다(사용자 launch.log로 확인). 파일을 하나씩 읽고 써서 복사하고, 임시 폴더에 다 채운 뒤 이름을 바꿉니다. Linux에서 확장을 풀어 MCP 클라이언트로 실행(도구 18개, 손글씨 사전 확인)하고 확장 폴더가 바뀌지 않는 것을 확인했습니다. Windows 실기기는 미확인.
+
+# Validation — v0.2.5 (2026-10-14)
+
+v0.2.5: building the package also renames files next to the sources, which failed inside the extension folder; the launcher now copies the program to `~/.inkbridge/app-<version>` and runs from there, and writes `~/.inkbridge/launch.log`. Checked that the unpacked extension folder is left unchanged.
+
+v0.2.4: Claude Desktop itself also runs uv at install time for "uv" extensions and failed the same way, so the extension now uses type "node" (Claude's built-in Node.js) with a small launcher, `server/launch.js`, that runs uv with everything in `~/.inkbridge`. Tested by packing, unpacking and driving it with an MCP client in the container.
+
+v0.2.3: on the owner's PC even renaming a folder inside the extension directory failed with os error 17 (likely Windows app-data virtualization for the Claude Desktop package). uv's Python, cache and virtual environment now live in `%USERPROFILE%\.inkbridge` instead. Windows retry pending.
+
+## v0.2.1
+
+v0.2.1 fixes the first real Claude Desktop install on Windows (owner's PC): (v0.2.2: the same cross-drive error then hit the managed Python install folder, so Python is now installed inside the extension too via `UV_PYTHON_INSTALL_DIR`.) uv inspected a system Python 3.14 and failed to write its cache (`os error 17`, cross-drive move). The extension now runs uv with `--python-preference only-managed`, its own cache folder inside the extension and `--link-mode copy`. Re-tested in the container only; the Windows retry is pending.
+
+## v0.2.0
+
+Checks for this release were run in a Linux container (4 CPU cores, Python 3.12). Windows was **not** run for this release; the GitHub Actions Windows jobs are the only Windows evidence. Private notes, recordings and the glyph dictionary are not in this repository.
+
+## What was actually executed
+
+| Check | Result |
+|---|---|
+| Private SDOCX notes parsed (fresh library) | 30 / 30 (116 pages, 76,524 strokes) |
+| Strokes with a decoded creation time | 76,524 / 76,524 |
+| Notes with recordings / recordings with decoded start + length from `note.note` | 2 / 4 |
+| In-place stroke addition to a copy of each note, then re-import | 30 / 30, stroke count +1, max coordinate error 0.0 |
+| Integrity chain (object → layer → page → `pageIdInfo.dat`) recomputed and re-verified | 30 / 30 |
+| Members other than the edited `.page` and `pageIdInfo.dat` | byte-identical (raw compressed bytes copied) |
+| Local transcription, `large-v3-turbo` int8 on CPU | 15 min 32 s lecture → 215 sentences in about 6 min |
+| Sentences with handwriting written within ±5 s | 143 / 215 |
+| Visual check of the alignment | a sentence at 02:47 matched the handwritten line it describes (page 1 box rendered and inspected) |
+| Korean + LaTeX written into a PDF page through the packed `.mcpb` (`uv run …`, no Node.js on PATH) | done; preview inspected visually |
+| Korean text written into a real lecture note (`_손글씨.sdocx`) | 114 strokes, max coordinate error 0.0156; preview inspected visually |
+| Automated tests | 70 passed (synthetic data only) |
+
+The `.mcpb` was built with `@anthropic-ai/mcpb` 2.1.2 (`validate` + `pack`), unpacked into an empty folder, and started exactly as the manifest says (`uv run --directory <folder> --extra audio --quiet sdocx-bridge --library … mcp …`) with an empty uv cache. Environment creation took 16 s on the container's network. A real MCP client session then listed 18 tools, auto-installed the glyph file named by `SDOCX_BRIDGE_PROFILE_FILE` (13,183 glyphs, 629 characters), found and opened a PDF from an allowed folder, and wrote Korean + LaTeX on page 1.
+
+A bug found by this run and fixed: the embedded MathJax engine (mini-racer) refuses time limits on a thread that runs an asyncio loop, which is where MCP tools run. MathJax now runs on its own worker thread; a regression test calls it from inside an event loop.
+
+## Not verified
+
+- Opening a patched or generated `.sdocx` in the Samsung Notes app on a device. The app may show a cached page preview (`.spi`) until it redraws; this was not observed either way.
+- Installing the `.mcpb` in the real Claude Desktop app (Windows or macOS). The uv runtime for extensions is marked experimental in the MCPB documentation. A slow first download could exceed the app's start-up wait; restarting the extension should then work because uv keeps what it downloaded.
+- `start.cmd` / `connect-claude.cmd` on Windows.
+- Transcription accuracy beyond reading the sample output; speed on the user's computer.
+- Windows on ARM: faster-whisper's engine (CTranslate2) has no wheel there, so transcription is unavailable on that platform.
+
+---
+
+# Validation — v0.1.1 (2026-10-15)
 
 Release candidate: 0.1.1. Local execution: Windows, Python 3.14.6. Source fixtures below are private and are **not** included in this repository.
 

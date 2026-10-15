@@ -62,10 +62,10 @@ def test_pdf_preserves_original(lib, tmp_path):
     digest = sha256(source)
     note = lib.import_file(source)
     result = compose_document(
-        lib, "AB", pdf_id=note["id"], page_index=1, synthesize=False
+        lib, "AB", pdf_id=note["id"], page_index=1, synthesize=False, make_sdocx=True
     )
     root = lib.root / "exports" / result["export_id"]
-    with fitz.open(root / "handwriting.pdf") as pdf:
+    with fitz.open(root / result["preview_pdf"]) as pdf:
         assert len(pdf) == 2
         assert "ORIGINAL BACKGROUND" in pdf[0].get_text()
         assert not list(pdf[0].annots() or [])

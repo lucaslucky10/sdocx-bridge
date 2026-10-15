@@ -20,7 +20,8 @@ from sdocx_bridge.handwriting import compose_document
         subprocess.CalledProcessError(1, "node"),
     ],
 )
-def test_optional_math_failure_is_actionable(lib, error):
+def test_node_math_failure_is_actionable(lib, error, monkeypatch):
+    monkeypatch.setenv("HW_TEX2SVG", TEX2SVG)  # forces the Node.js path
     before = set((lib.root / "exports").iterdir())
     with patch("handwriting_engine.compose.subprocess.run", side_effect=error):
         with pytest.raises(ValueError, match="LaTeX"):
@@ -28,12 +29,41 @@ def test_optional_math_failure_is_actionable(lib, error):
     assert set((lib.root / "exports").iterdir()) == before
 
 
+def test_embedded_math_failure_is_actionable(lib):
+    before = set((lib.root / "exports").iterdir())
+    with patch("handwriting_engine.compose._tex_svg_v8", side_effect=RuntimeError("boom")):
+        with pytest.raises(ValueError, match="LaTeX renderer failed"):
+            compose_document(lib, "$A+B$", synthesize=False)
+    assert set((lib.root / "exports").iterdir()) == before
+
+
+def test_embedded_mathjax_needs_no_node(lib, monkeypatch):
+    """The bundled MathJax runs inside mini-racer; Node.js is not on PATH here."""
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.delenv("HW_TEX2SVG", raising=False)
+    result = compose_document(lib, r"A $\frac{A+B}{123}=A$", synthesize=False)
+    assert result["strokes"] > 10 and not result["missing"]
+    with pytest.raises(ValueError, match="Invalid LaTeX"):
+        tex_layout(r"\notAnActualCommand")
+
+
+def test_embedded_mathjax_inside_event_loop(lib):
+    """MCP tools run on an asyncio thread; mini-racer timeouts must still work there."""
+    import asyncio
+
+    async def run():
+        return tex_layout(r"x^2")
+
+    assert asyncio.run(run())
+
+
 @pytest.mark.skipif(
     not shutil.which("node")
     or not (Path(TEX2SVG).parent / "node_modules/mathjax-full").exists(),
     reason="optional MathJax installation",
 )
-def test_actual_mathjax_layout(lib):
+def test_actual_node_mathjax_layout(lib, monkeypatch):
+    monkeypatch.setenv("HW_TEX2SVG", TEX2SVG)
     result = compose_document(lib, r"$\frac{A+B}{123}=A$", synthesize=False)
     assert result["strokes"] > 10 and not result["missing"]
     with pytest.raises(ValueError, match="Invalid LaTeX"):
