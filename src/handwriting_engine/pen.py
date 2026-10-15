@@ -32,19 +32,19 @@ class Pen:
     width_mm: float = 0.36  # visible line width of the core
     color: tuple = (22, 22, 26)  # colour of fully inked line after scanning
     density: float = 0.97  # ink coverage in the middle of a stroke (0..1)
-    skip: float = 0.28  # strength of ball-skip streaks
+    skip: float = 0.12  # strength of ball-skip streaks (scans of real notes show little)
     skip_mm: float = 0.9  # typical length of a streak
     start_mm: float = 0.35  # length of the lighter start of a stroke
-    start_density: float = 0.55
+    start_density: float = 0.8
     blob: float = 0.35  # chance of an ink blob at a slow stroke end
     edge_mm: float = 0.06  # softness of the line edge
     grain: float = 0.35  # paper grain showing through light ink
     pressure_width: float = 0.10  # width change with pressure
-    speed_fade: float = 0.25  # lighter on fast straight parts
+    speed_fade: float = 0.1  # lighter on fast straight parts
     blend: str = "multiply"
     flat: bool = False  # highlighter: chisel tip
     scan_blur_px: float = 0.45  # scanner softness at 150 dpi
-    contrast: float = 1.25  # document-scanner contrast stretch on the ink
+    contrast: float = 1.4  # document-scanner contrast stretch on the ink
 
 
 PENS = {

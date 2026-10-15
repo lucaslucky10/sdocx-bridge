@@ -48,11 +48,11 @@ from .compose import compose
 
 @dataclass(frozen=True)
 class PaperStyle:
-    x_scale: float = 1.07  # paper / tablet glyph width at equal height (with the tighter gaps below)
+    x_scale: float = 1.02  # paper / tablet glyph width at equal height: on paper syllables are narrower
     size_mm: float = 5.8  # glyph unit (Hangul syllable box) on paper
     fill: float = 0.62  # glyph unit / row height when rows are narrow
     baseline: float = 0.14  # baseline above the printed line, in glyph units
-    unit_per_height: float = 1.08  # glyph unit / measured height of a written row
+    unit_per_height: float = 1.1  # glyph unit / measured height of a written row
     wobble: float = 0.022  # baseline wander along a row (syllable heights)
     wobble_len: float = 5.0  # its correlation length (syllables)
     drift_deg: float = 0.5  # how far a row may tilt away from the printed line
@@ -61,20 +61,16 @@ class PaperStyle:
     tremor_mm: float = 0.04  # hand tremor on drawn marks
     line_gap: float = 1.75  # row pitch on unlined paper (syllable heights)
     overshoot: float = 0.03  # strokes run on a little past their end (glyph units)
-    ligature: float = 0.45  # chance that the pen stays on the paper between two strokes
+    ligature: float = 0.35  # chance that the pen stays on the paper between two strokes
     ligature_dist: float = 0.45  # ... when the next stroke starts this close (glyph units)
-    ligature_ink: float = 0.6  # how much ink such a connecting hairline leaves
+    ligature_ink: float = 0.3  # how much ink such a connecting hairline leaves
     compact: float = 0.9  # strokes of a syllable sit closer together on paper (1 = as on tablet)
-    tracking: float = 0.5  # gaps between letters, relative to the tablet
-    word_space: float = 0.8  # gaps between words, relative to the tablet
-    scribble: float = 1.0  # overall strength of the fast-writing changes below (0 = tablet-neat)
-    round_corners: float = 0.09  # corners rounded off by the fast hand (glyph units, smoothing radius)
-    warp: float = 0.06  # slow wobble inside each letter (glyph units)
-    glyph_rotate_deg: float = 3.5  # each letter turned a little
-    glyph_scale: float = 0.05  # each letter a little larger or smaller
-    glyph_shift: float = 0.035  # each letter a little up or down (glyph units)
-    rise_deg: float = 6.0  # horizontal strokes climb to the right
-    word_ligature: float = 0.25  # chance the pen drags from one letter into the next in a word
+    stem: float = 1.12  # long vertical strokes of Hangul (ㅣ ㅏ ㅓ ㅔ …) drawn this much longer (below 1: shorter)
+    bar: float = 0.9  # long horizontal strokes of Hangul (ㅡ ㅗ ㅜ …) drawn this much longer (below 1: shorter)
+    bow: float = 0.06  # long strokes bend a little as the wrist turns (sagitta / length)
+    round_corners: float = 0.14  # corners drawn as curves by the faster hand (glyph units; 0 = as on tablet)
+    tracking: float = 0.55  # gaps between letters, relative to the tablet
+    word_space: float = 0.95  # gaps between words, relative to the tablet
     math_height: float = 2.4  # tallest math (a fraction) in glyph units; taller is scaled down
 
 
@@ -124,10 +120,13 @@ def _measure(rgb, dark, ink):
     if m.sum() < 600:
         return None
     near = scanpage_near(m) & ink
-    width = float((dark * near).sum() / _skeleton_len(m))
+    # visible width: pixels at least half dark per unit of line length
+    width = float(((dark > 0.5) & near).sum() / _skeleton_len(m))
     core = rgb[m & (dark >= np.percentile(dark[m], 60))]
     color = np.median(core, axis=0)
+    sk = thin(ink & (dark > 0.24))
     return {"width_px": width, "color": tuple(int(c) for c in color),
+            "core": float(np.median(rgb[sk].mean(1))) if sk.any() else float(color.mean()),
             "mid": float(((dark > 0.15) & (dark < 0.7) & near).sum() / max(1, near.sum()))}
 
 
@@ -174,6 +173,10 @@ def calibrate(img, analysis, pen="ballpoint", dpi=None, db=None, size_px=None):
             break
         k = target["width_px"] / max(got["width_px"], 1e-3)
         upd = {"width_mm": float(np.clip(p.width_mm * k ** 0.9, 0.12, 1.5))}
+        # a document scanner turns ballpoint nearly solid along the middle of a line;
+        # match how dark the centre line is, not only the darkest pixels
+        kc = (1 - target["core"] / 255) / max(1 - got["core"] / 255, 0.05)
+        upd["contrast"] = float(np.clip(p.contrast * kc ** 1.2, 1.0, 2.5))
         if black:
             td = 1 - np.array(target["color"]) / 255
             gd = 1 - np.array(got["color"]) / 255
@@ -181,7 +184,7 @@ def calibrate(img, analysis, pen="ballpoint", dpi=None, db=None, size_px=None):
             nd = np.clip(pd * (td / np.maximum(gd, 1e-3)) ** 0.8, 0, 1)
             upd["color"] = tuple(int(round(255 * (1 - v))) for v in nd)
         p = replace(p, **upd)
-        if abs(k - 1) < 0.04:
+        if abs(k - 1) < 0.04 and abs(kc - 1) < 0.03:
             break
     return p, target
 
@@ -445,15 +448,6 @@ def _small_fractions(st, ids, style):
     return st, total
 
 
-def _hangul(s):
-    ch = s.get("ch", "")
-    return len(ch) == 1 and ("가" <= ch <= "힣" or "ㄱ" <= ch <= "ㅣ")
-
-
-def _arc(s):
-    return float(np.hypot(np.diff(s["x"]), np.diff(s["y"])).sum())
-
-
 def _resample_arc(x, y, step):
     d = np.hypot(np.diff(x), np.diff(y))
     s = np.r_[0, np.cumsum(d)]
@@ -477,68 +471,77 @@ def _smooth_keep_ends(v, sigma_pts):
     return v * (1 - w) + out * w
 
 
-def scribble(st, style, nrng):
-    """Fast handwriting on paper: corners rounded off, a slow wobble inside each letter,
-    letters a little turned, scaled and shifted, horizontal strokes climbing to the right.
-    Strokes of one glyph change together; a run of math is only rounded, wobbled and
-    tilted, never turned or rescaled piece by piece."""
-    k = style.scribble
-    groups, run = {}, None
-    for i, s in enumerate(st):
-        if "glyph" in s:
-            groups.setdefault(s["glyph"], []).append(i)
-            run = None
-        elif "missing" not in s:
-            # a run of math moves as one piece: only rounding, wobble and climbing strokes
-            if run is None:
-                run = ("math", i)
-            groups.setdefault(run, []).append(i)
-    st = list(st)
+def _hangul(s):
+    ch = s.get("ch", "")
+    return len(ch) == 1 and ("가" <= ch <= "힣" or "ㄱ" <= ch <= "ㅣ")
+
+
+def long_stems(st, k, kb=1.0):
+    """On paper the vowel stems run longer than on the tablet: the hand pulls the downstroke
+    through instead of stopping at the consonant's height. Long near-vertical strokes of
+    Hangul are stretched about their middle (k), long horizontals likewise (kb); short
+    strokes (consonant sides) are left alone."""
+    if abs(k - 1) < 1e-3 and abs(kb - 1) < 1e-3:
+        return st
+    out = []
+    for s in st:
+        x, y = np.asarray(s["x"], float), np.asarray(s["y"], float)
+        if _hangul(s) and len(y) > 1:
+            dy, dx = float(y.max() - y.min()), float(x.max() - x.min())
+            if dy > 0.75 and dx < 0.2 * dy:
+                m = 0.5 * (y.max() + y.min())
+                s = dict(s, y=m + (y - m) * k)
+            elif dx > 0.4 and dy < 0.25 * dx:
+                m = 0.5 * (x.max() + x.min())
+                s = dict(s, x=m + (x - m) * kb)
+        out.append(s)
+    return out
+
+
+def bow_strokes(st, k):
+    """Long straight strokes are pulled by the wrist into a shallow arc: horizontals bulge
+    up, verticals bulge to the right. The same for every letter, so nothing wobbles."""
+    if k <= 0:
+        return st
+    out = []
+    for s in st:
+        x, y = np.asarray(s["x"], float), np.asarray(s["y"], float)
+        if "missing" not in s and len(x) > 2:
+            dx, dy = x[-1] - x[0], y[-1] - y[0]
+            L = math.hypot(dx, dy)
+            arc = float(np.hypot(np.diff(x), np.diff(y)).sum())
+            if L > 0.3 and arc < 1.15 * L:
+                d = np.hypot(np.diff(x), np.diff(y))
+                t = np.r_[0, np.cumsum(d)] / max(arc, 1e-9)
+                nx, ny = -dy / L, dx / L  # left normal of the stroke direction
+                if (abs(dx) >= abs(dy) and ny > 0) or (abs(dx) < abs(dy) and nx < 0):
+                    nx, ny = -nx, -ny  # horizontals bulge up, verticals to the right
+                h = k * L * np.sin(np.pi * t)
+                s = dict(s, x=x + nx * h, y=y + ny * h)
+        out.append(s)
+    return out
+
+
+def round_corners(st, radius):
+    """Corners drawn as curves, the same way every time (no random change of shape).
+
+    A ballpoint on paper is moved faster than a stylus on glass, so ㅁ, ㅈ, ㄹ turn in
+    arcs instead of points. Stroke ends stay put; closed and short strokes (ㅇ, o, dots)
+    are only softened so they keep their size."""
+    if radius <= 0:
+        return st
     step = 0.01
-    for key, ids in groups.items():
-        is_math = isinstance(key, tuple)
-        xs = np.concatenate([np.asarray(st[i]["x"], float) for i in ids])
-        ys = np.concatenate([np.asarray(st[i]["y"], float) for i in ids])
-        cx, cy = float(xs.mean()), float(ys.max())  # turn and scale about the bottom centre
-        a = 0.0 if is_math else math.radians(nrng.normal(0, style.glyph_rotate_deg * k))
-        sc = 1.0 if is_math else 1 + nrng.normal(0, style.glyph_scale * k)
-        dy = 0.0 if is_math else nrng.normal(0, style.glyph_shift * k)
-        # smooth random displacement field over the letter (a few knots per unit)
-        # knots every half glyph unit, so a small letter (=, ㅇ) moves almost as a whole
-        x0, y0 = float(xs.min()), float(ys.min())
-        n = int(max(xs.max() - x0, ys.max() - y0) / 0.5) + 2
-        kx = nrng.normal(0, 1, (2, n + 1, n + 1))
-        rise = math.radians(style.rise_deg * k * (0.5 + nrng.random()))
-        for i in ids:
-            x, y = _resample_arc(np.asarray(st[i]["x"], float), np.asarray(st[i]["y"], float), step)
-            # a horizontal stroke is drawn climbing a little, turning about where it starts
-            if len(x) > 2:
-                ddx, ddy = x[-1] - x[0], y[-1] - y[0]
-                if abs(ddx) > 0.15 and abs(ddy) < 0.35 * abs(ddx):
-                    t = (x - x[0])
-                    y = y - t * math.tan(rise) * np.sign(ddx)
-            # rounded corners: smoothing along the stroke, ends kept; small and closed
-            # strokes (ㅇ, o) are only softened, or they would shrink and open up
-            arc = float(np.hypot(np.diff(x), np.diff(y)).sum()) if len(x) > 1 else 0.0
-            closed = len(x) > 2 and math.hypot(x[-1] - x[0], y[-1] - y[0]) < 0.3 * arc
-            sig = min(style.round_corners * k, arc / (25 if closed else 10)) / step
-            x, y = _smooth_keep_ends(x, sig), _smooth_keep_ends(y, sig)
-            u = np.clip((x - x0) / 0.5, 0, n - 0.001)
-            v = np.clip((y - y0) / 0.5, 0, n - 0.001)
-            iu, iv = u.astype(int), v.astype(int)
-            fu, fv = u - iu, v - iv
-
-            def field(c):
-                g = kx[c]
-                return ((1 - fu) * (1 - fv) * g[iv, iu] + fu * (1 - fv) * g[iv, iu + 1]
-                        + (1 - fu) * fv * g[iv + 1, iu] + fu * fv * g[iv + 1, iu + 1])
-
-            x = x + field(0) * style.warp * k
-            y = y + field(1) * style.warp * k
-            rx = cx + ((x - cx) * math.cos(a) - (y - cy) * math.sin(a)) * sc
-            ry = cy + ((x - cx) * math.sin(a) + (y - cy) * math.cos(a)) * sc + dy
-            st[i] = dict(st[i], x=rx, y=ry)
-    return st
+    out = []
+    for s in st:
+        if "missing" in s or len(s["x"]) < 3:
+            out.append(s)
+            continue
+        x, y = _resample_arc(np.asarray(s["x"], float), np.asarray(s["y"], float), step)
+        arc = float(np.hypot(np.diff(x), np.diff(y)).sum())
+        closed = math.hypot(x[-1] - x[0], y[-1] - y[0]) < 0.3 * arc
+        sig = min(radius, arc / (25 if closed else 10)) / step
+        out.append(dict(s, x=_smooth_keep_ends(x, sig), y=_smooth_keep_ends(y, sig)))
+    return out
 
 
 def paperize(st, style, rng):
@@ -567,8 +570,7 @@ def paperize(st, style, rng):
             for i in ids:
                 st[i] = dict(st[i], x=cx + (np.asarray(st[i]["x"]) - cx) * k,
                              y=b0 + (np.asarray(st[i]["y"]) - ys1.max()) * k)
-    if style.scribble > 0:
-        st = scribble(st, style, np.random.default_rng(rng.randrange(1 << 30)))
+    st = round_corners(bow_strokes(long_stems(st, style.stem, style.bar), style.bow), style.round_corners)
     out = []
     for s in st:
         x = np.asarray(s["x"], float)
@@ -590,22 +592,12 @@ def paperize(st, style, rng):
     merged = []
     for s in out:
         prev = merged[-1] if merged else None
-        if (prev is not None and prev.get("glyph") is not None and s.get("glyph") is not None
+        if (prev is not None and prev.get("glyph") is not None and prev.get("glyph") == s.get("glyph")
                 and len(prev["x"]) > 1 and len(s["x"]) > 1):
             ex, ey = prev["x"][-1], prev["y"][-1]
             sx, sy = s["x"][0], s["y"][0]
             dist = math.hypot(sx - ex, sy - ey)
-            same = prev["glyph"] == s["glyph"]
-            # into the next letter of the same word: only a short hop forward
-            chance = style.ligature if same else style.word_ligature * style.scribble
-            near = dist < (style.ligature_dist if same else 1.4 * style.ligature_dist)
-            if not same and not (0 < sx - ex < 0.6):
-                near = False
-            # dots (colons, i, periods) are tapped, never dragged into, and symbols and
-            # digits keep their strokes apart (= must not turn into z)
-            if _arc(prev) < 0.15 or _arc(s) < 0.15 or not (_hangul(prev) and _hangul(s)):
-                near = False
-            if near and rng.random() < chance:
+            if dist < style.ligature_dist and rng.random() < style.ligature:
                 n = max(3, int(dist / 0.04))
                 t = np.linspace(0, 1, n + 2)[1:-1]
                 # a slight arc, as the hand swings to the next stroke
