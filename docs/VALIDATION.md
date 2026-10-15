@@ -1,4 +1,4 @@
-# Validation — v0.3.0 (2026-10-15): paper scans and pen ink
+# Validation — v0.3.1 (2026-10-15): paper scans and pen ink
 
 New: `analyze_scan`, `view_scan`, `write_on_scan`, `make_blank_page`, `pen_samples`, `learn_paper_style` (modules `handwriting_engine/scanpage.py`, `pen.py`, `paper.py`, `sdocx_bridge/paper_tools.py`). Run in a Linux container through an MCP client; Windows Claude Desktop not run. The owner's scans, glyph dictionary and comparison images are not in this repository.
 
@@ -7,6 +7,7 @@ New: `analyze_scan`, `view_scan`, `write_on_scan`, `make_blank_page`, `pen_sampl
 | Printed lines found on the owner's scanned concept-note pages (54 page images from 21 PDFs, 146–150 dpi and phone photos) | analysis runs on all 54 (0.1–4 s each); rows and table cells checked by eye on the numbered previews of a sample of form pages, not against hand-labelled ground truth. Pages without printed lines give one page box |
 | Synthetic bent pages (lined, grid, plain) | line count exact ±1, detected curve within 1 px of the printed line (tests/test_paper.py) |
 | Size, position and width of paper handwriting | closed loop on 11 transcribed rows of real writing: the row is erased, the same text is written into it, and the same measurement is applied to both. Ink band height 31 px real vs 30 px written, bottom 4 px above the printed line in both, row width ratio real/written 1.01 (rows that fit). The fit is repeatable on anyone's scans with `learn_paper_style` |
+| Paper messiness (`scribble`, 0.3.1) | same 11 rows, skeleton measures per 100 px of ink, real vs written: stroke ends 5.0 vs 4.2, junctions 17.3 vs 18.9, share of skeleton running exactly along x/y 0.236 vs 0.237 (0.267 before scribble, i.e. too straight). Width ratio stays 1.01. Applies to paper only; tablet output unchanged |
 | Pen width and colour | measured from the ink already on the page (skeleton length vs ink area) and matched by rendering and re-measuring (closed loop) |
 | Scanned PDF output | the page image is replaced in place (same size, same JPEG tables when the source is JPEG); other pages untouched; result can be written on again by `export_id` |
 | Full test suite | 77 passed, 1 skipped |
