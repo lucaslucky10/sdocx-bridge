@@ -1,3 +1,20 @@
+# Validation — v0.3.0 (2026-10-15): paper scans and pen ink
+
+New: `analyze_scan`, `view_scan`, `write_on_scan`, `make_blank_page`, `pen_samples`, `learn_paper_style` (modules `handwriting_engine/scanpage.py`, `pen.py`, `paper.py`, `sdocx_bridge/paper_tools.py`). Run in a Linux container through an MCP client; Windows Claude Desktop not run. The owner's scans, glyph dictionary and comparison images are not in this repository.
+
+| Check | Result |
+|---|---|
+| Printed lines found on the owner's scanned concept-note pages (54 page images from 21 PDFs, 146–150 dpi and phone photos) | analysis runs on all 54 (0.1–4 s each); rows and table cells checked by eye on the numbered previews of a sample of form pages, not against hand-labelled ground truth. Pages without printed lines give one page box |
+| Synthetic bent pages (lined, grid, plain) | line count exact ±1, detected curve within 1 px of the printed line (tests/test_paper.py) |
+| Size, position and width of paper handwriting | closed loop on 11 transcribed rows of real writing: the row is erased, the same text is written into it, and the same measurement is applied to both. Ink band height 31 px real vs 30 px written, bottom 4 px above the printed line in both, row width ratio real/written 1.01 (rows that fit). The fit is repeatable on anyone's scans with `learn_paper_style` |
+| Pen width and colour | measured from the ink already on the page (skeleton length vs ink area) and matched by rendering and re-measuring (closed loop) |
+| Scanned PDF output | the page image is replaced in place (same size, same JPEG tables when the source is JPEG); other pages untouched; result can be written on again by `export_id` |
+| Full test suite | 77 passed, 1 skipped |
+
+Known limits: written text is a little more regular than real writing; characters missing from the glyph dictionary stop the write (nothing is written) and are named; very small or dense printed text inside a row is not distinguished from handwriting, so `filled` can be high for rows with printed text near the line; photos taken at an angle are not flattened (lines may be curved but the page is assumed roughly frontal).
+
+Reference: thinning for the ink width measurement follows Zhang & Suen, "A fast parallel algorithm for thinning digital patterns", CACM 27(3), 1984.
+
 > 0.2.7: 0.2.6은 사용자 Windows PC에서 복사와 시작까지는 됐지만 서버가 몇 초 만에 코드 0으로 끝났습니다(launch.log). 입력이 닫힌 것으로 보고, 표준 입출력을 자식 프로세스에 넘기지 않고 파이프로 중계하도록 바꿨습니다(원인은 추정, 다음 로그의 바이트 수로 확인). 치환되지 않은 `${DOCUMENTS}` 같은 값도 직접 채웁니다. Linux에서 MCP 클라이언트로 확인, Windows 미확인.
 
 > 0.2.6: 0.2.5는 일부 Windows에서 프로그램 복사(fs.cpSync → CopyFile2)가 EPERM/UNKNOWN으로 실패했습니다(사용자 launch.log로 확인). 파일을 하나씩 읽고 써서 복사하고, 임시 폴더에 다 채운 뒤 이름을 바꿉니다. Linux에서 확장을 풀어 MCP 클라이언트로 실행(도구 18개, 손글씨 사전 확인)하고 확장 폴더가 바뀌지 않는 것을 확인했습니다. Windows 실기기는 미확인.
