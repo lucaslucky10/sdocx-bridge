@@ -653,6 +653,10 @@ def compose(db, text, width=40.0, line_gap=2.1, seed=None, jitter=1.0, color=INK
                 g = db.pick(ch, rng)
                 c = synth_color if synth_color and (g.get('synth') or g.get('derived')) else color
                 st, adv = place(g, x, base + drift * x, 1.0, _jitter(rng, jitter), c, db.pen)
+                for q in st:
+                    q['glyph'] = len(strokes)  # the strokes of one glyph share this id
+                    q['ch'] = ch
+                    q['sp'] = bool(sp)  # a space was typed before this character
                 strokes.extend(st)
                 if log is not None:
                     xs = np.concatenate([q['x'] for q in st]); ys = np.concatenate([q['y'] for q in st])

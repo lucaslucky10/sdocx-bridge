@@ -2,9 +2,9 @@
   "manifest_version": "0.4",
   "name": "sdocx-bridge",
   "display_name": "Inkbridge — 삼성노트·PDF 손글씨",
-  "version": "0.2.7",
-  "description": "Let Claude read Samsung Notes (.sdocx) and PDFs, transcribe note recordings locally, and write text into them as real pen strokes in your own handwriting.",
-  "long_description": "Inkbridge runs on your computer. Claude can open .sdocx and .pdf files from your Downloads, Documents and Desktop folders (and any folders you add), look at every page, read stroke timing, transcribe recordings with a free local Whisper model, and write text in your handwriting as vector ink: PDF ink annotations, or new strokes added to a copy of the Samsung Notes file. Originals are never modified and nothing is uploaded.",
+  "version": "0.3.3",
+  "description": "Let Claude read Samsung Notes (.sdocx) and PDFs, transcribe note recordings locally, write into them in your own handwriting, and fill photos or scans of paper notes in realistic ballpoint handwriting that follows the printed lines.",
+  "long_description": "Inkbridge runs on your computer. Claude can open .sdocx and .pdf files from your Downloads, Documents and Desktop folders (and any folders you add), look at every page, read stroke timing, transcribe recordings with a free local Whisper model, and write text in your handwriting as vector ink: PDF ink annotations, or new strokes added to a copy of the Samsung Notes file. Originals are never modified and nothing is uploaded. It can also fill a photo or scan of a paper note: it finds the printed lines (even when the page is bent), the boxes and what is already written, and writes your handwriting there so it looks like real ballpoint ink that was scanned.",
   "author": {
     "name": "lucaslucky10",
     "url": "https://github.com/lucaslucky10"
@@ -105,6 +105,30 @@
     {
       "name": "learn_character",
       "description": "Teach a missing character from strokes in a note"
+    },
+    {
+      "name": "analyze_scan",
+      "description": "Find the printed lines, boxes and empty writing areas on a photo or scan"
+    },
+    {
+      "name": "view_scan",
+      "description": "Look at a photo or scan page, zoomed, with pixel coordinates"
+    },
+    {
+      "name": "write_on_scan",
+      "description": "Write on a photo or scan in realistic pen handwriting along its lines"
+    },
+    {
+      "name": "make_blank_page",
+      "description": "Make a scanned-looking blank lined, grid, dotted or plain page"
+    },
+    {
+      "name": "pen_samples",
+      "description": "Show your handwriting with each pen (ballpoint, gel, pencil …)"
+    },
+    {
+      "name": "learn_paper_style",
+      "description": "Fit paper handwriting size and width to rows you wrote on real scans"
     }
   ],
   "prompts": [
@@ -123,6 +147,15 @@
         "note_id"
       ],
       "text": "Transcribe the recording of note ${arguments.note_id}, compare it with the handwriting, and write what is missing near the related notes in my handwriting. Show me the result."
+    },
+    {
+      "name": "fill_concept_note",
+      "description": "Fill a photographed or scanned note form in your pen handwriting",
+      "arguments": [
+        "source",
+        "content"
+      ],
+      "text": "Fill the note ${arguments.source} in my pen handwriting: ${arguments.content}. Follow its printed lines and boxes, then show me the result."
     }
   ],
   "keywords": [

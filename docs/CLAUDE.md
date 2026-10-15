@@ -37,6 +37,8 @@ claude mcp add --transport stdio sdocx-bridge -- uv run --directory /path/to/sdo
 - "a.sdocx의 손글씨를 페이지별로 전부 읽어서 텍스트로 정리해줘. 확실하지 않은 글자는 표시해줘."
 - "a.sdocx 녹음을 받아쓰고, 내가 필기하지 않은 중요한 설명을 관련 필기 옆 빈 곳에 내 손글씨로 채워줘."
 - "8강 노트 녹음만 따로 뽑아줘." / "결과 파일을 바탕 화면에 복사해줘."
+- "다운로드 폴더의 개념노트.jpg 양식에 맞춰 이차함수 최대·최소를 볼펜 손글씨로 채워줘." (사진은 채팅 첨부가 아니라 다운로드 등 허용 폴더에 저장해 두세요. MCP 서버는 채팅 첨부를 읽을 수 없습니다.)
+- "빈 줄노트 한 장 만들어서 파란 볼펜으로 오늘 배운 내용 정리해줘."
 
 Claude는 보통 `find_files → open_file → view_page(grid) → page_layout → write_handwriting → (미리보기 확인)` 순서로 일합니다. 받아쓰기는 `transcribe_recording` 으로 시작하고 끝날 때까지 상태를 확인한 뒤 `get_transcript` 로 문장과 그때의 필기 위치를 받습니다.
 
@@ -55,8 +57,16 @@ Claude는 보통 `find_files → open_file → view_page(grid) → page_layout �
 | `list_handwriting_profiles`, `import_handwriting_profile`, `learn_character` | 손글씨 사전 관리 |
 | `write_handwriting` | PDF 복사본, 삼성노트 복사본, 새 페이지에 내 글씨 쓰기. 미리보기 이미지 반환 |
 | `view_output`, `export_note`, `save_copy` | 결과 보기, 내보내기(PDF/SVG/JSON/Markdown/녹음), 원하는 폴더로 복사 |
+| `analyze_scan` | 종이 사진·스캔(이미지/PDF)의 인쇄된 줄(휜 줄 포함)·칸·이미 쓴 곳을 찾아 번호 붙인 쓰기 영역과 미리보기 반환 |
+| `view_scan` | 사진·스캔 확대 보기(픽셀 좌표 격자) |
+| `write_on_scan` | 영역 번호나 좌표에 볼펜 손글씨 쓰기, 표시(밑줄·동그라미 등), 손그림, 지우기. 한 번에 여러 항목. 결과를 원본과 같은 형식(PDF면 다른 쪽 유지)으로 저장 |
+| `make_blank_page` | 스캔한 것 같은 빈 줄노트·모눈·점선·무지 페이지 |
+| `pen_samples` | 펜 종류별 같은 문장 미리보기 |
+| `learn_paper_style` | 내가 종이에 쓴 줄(내용은 Claude가 읽음)로 종이 글씨 크기·폭·높이 다시 맞추기 |
 
-쪽 번호는 1부터, 좌표는 페이지 왼쪽 위가 원점입니다(PDF는 pt, 삼성노트는 노트 자체 단위). `--read-only` 로 실행하면 쓰기 도구가 등록되지 않습니다.
+쪽 번호는 1부터, 좌표는 페이지 왼쪽 위가 원점입니다(PDF는 pt, 삼성노트는 노트 자체 단위, 사진·스캔 도구는 이미지 픽셀).
+
+종이 노트 채우기 순서: `find_files(kind="scan") → analyze_scan → view_scan(region, grid) → write_on_scan(items=[{"area": 번호, "text": …}, …]) → 이미지 확인 → save_copy`. 긴 글은 아래 빈 줄로 이어집니다. 한 결과에 더 쓰려면 `source` 에 그 결과의 `export_id` 를 넣습니다(PDF의 다른 쪽도 이렇게). `--read-only` 로 실행하면 쓰기 도구가 등록되지 않습니다.
 
 ## 개인정보
 
