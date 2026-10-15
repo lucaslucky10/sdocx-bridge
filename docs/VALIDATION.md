@@ -1,4 +1,4 @@
-# Validation — v0.3.2 (2026-10-15): paper scans and pen ink
+# Validation — v0.3.3 (2026-10-15): paper scans and pen ink
 
 New: `analyze_scan`, `view_scan`, `write_on_scan`, `make_blank_page`, `pen_samples`, `learn_paper_style` (modules `handwriting_engine/scanpage.py`, `pen.py`, `paper.py`, `sdocx_bridge/paper_tools.py`). Run in a Linux container through an MCP client; Windows Claude Desktop not run. The owner's scans, glyph dictionary and comparison images are not in this repository.
 
@@ -8,6 +8,7 @@ New: `analyze_scan`, `view_scan`, `write_on_scan`, `make_blank_page`, `pen_sampl
 | Synthetic bent pages (lined, grid, plain) | line count exact ±1, detected curve within 1 px of the printed line (tests/test_paper.py) |
 | Size, position and width of paper handwriting | closed loop on 11 transcribed rows of real writing: the row is erased, the same text is written into it, and the same measurement is applied to both. Ink band height 31 px real vs 30 px written, bottom 4 px above the printed line in both, row width ratio real/written 1.01 (rows that fit). The fit is repeatable on anyone's scans with `learn_paper_style` |
 | Paper letter shape and ink (0.3.2) | same rows, real vs written, ratio real/written: word width 0.97-0.99, word height 1.01, row width 1.01, ink components per character 1.87 vs 1.88, stroke width at three ink thresholds within 4%, median darkness along the centre of a line 14 vs 21 (0.3.0: 51). Every change is the same for every letter (no random turn or shift); 0.3.1 random per-letter scribble was withdrawn after the owner judged it unstable. Paper only; tablet output unchanged |
+| Phone photo of a printed form (0.3.3) | owner's photo of the concept-note form (1500×2000, grey paper): written ink was pure black (0-5 on paper 182) against print at 60-80; now no darker than the darkest 5% of the page (photo ≈0.15 of paper, scans 0). Ballpoint width kept to 0.25-0.45 mm. Plain-text formulas (`tan θ = y/x`) no longer get word-sized gaps, math is not split from the letters next to it, rows in a box start after a printed label (성질①, 설명) and run on into the ruled lines below, small fields (date) shrink to one line, overflowing text is written up to 15% smaller before did_not_fit. Checked by eye on the owner's blank form; scan fit unchanged (row width 1.02, word width 1.00) |
 | Pen width and colour | measured from the ink already on the page (skeleton length vs ink area) and matched by rendering and re-measuring (closed loop) |
 | Scanned PDF output | the page image is replaced in place (same size, same JPEG tables when the source is JPEG); other pages untouched; result can be written on again by `export_id` |
 | Full test suite | 77 passed, 1 skipped |

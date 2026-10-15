@@ -122,11 +122,17 @@ def _measure(rgb, dark, ink):
     near = scanpage_near(m) & ink
     # visible width: pixels at least half dark per unit of line length
     width = float(((dark > 0.5) & near).sum() / _skeleton_len(m))
-    core = rgb[m & (dark >= np.percentile(dark[m], 60))]
+    # colours relative to the paper right around the ink: on a photo the paper is grey and
+    # unevenly lit, and the pen is multiplied onto it, so "ink / paper" is what has to match
+    ring = scanpage_near(ink, 4) & ~scanpage_near(ink, 1)
+    paper = np.median(rgb[ring], axis=0) if ring.sum() > 50 else np.full(3, 255.0)
+    rel = np.clip(rgb * (255.0 / np.maximum(paper, 1)), 0, 255)
+    core = rel[m & (dark >= np.percentile(dark[m], 60))]
     color = np.median(core, axis=0)
     sk = thin(ink & (dark > 0.24))
     return {"width_px": width, "color": tuple(int(c) for c in color),
-            "core": float(np.median(rgb[sk].mean(1))) if sk.any() else float(color.mean()),
+            "paper": tuple(int(c) for c in paper),
+            "core": float(np.median(rel[sk].mean(1))) if sk.any() else float(color.mean()),
             "mid": float(((dark > 0.15) & (dark < 0.7) & near).sum() / max(1, near.sum()))}
 
 
@@ -155,7 +161,11 @@ def calibrate(img, analysis, pen="ballpoint", dpi=None, db=None, size_px=None):
     black = p.name in ("ballpoint", "gel", "fineliner") and max(target["color"]) - min(target["color"]) < 40
     if black:
         p = replace(p, color=tuple(int(c) for c in target["color"]))
-    p = replace(p, width_mm=max(0.15, min(1.2, target["width_px"] / mm)))
+    # with no handwriting on the page the ink measured is print: copy its tone, not its
+    # (thin, typeset) line width
+    match_width = bool(analysis.get("handwriting_height"))
+    if match_width:
+        p = replace(p, width_mm=max(0.15, min(1.2, target["width_px"] / mm)))
     if db is None:
         return p, target
     size_px = size_px or analysis.get("letter_height") or 5.3 * mm
@@ -172,7 +182,7 @@ def calibrate(img, analysis, pen="ballpoint", dpi=None, db=None, size_px=None):
         if not got:
             break
         k = target["width_px"] / max(got["width_px"], 1e-3)
-        upd = {"width_mm": float(np.clip(p.width_mm * k ** 0.9, 0.12, 1.5))}
+        upd = {"width_mm": float(np.clip(p.width_mm * k ** 0.9, 0.12, 1.5))} if match_width else {}
         # a document scanner turns ballpoint nearly solid along the middle of a line;
         # match how dark the centre line is, not only the darkest pixels
         kc = (1 - target["core"] / 255) / max(1 - got["core"] / 255, 0.05)
@@ -184,9 +194,30 @@ def calibrate(img, analysis, pen="ballpoint", dpi=None, db=None, size_px=None):
             nd = np.clip(pd * (td / np.maximum(gd, 1e-3)) ** 0.8, 0, 1)
             upd["color"] = tuple(int(round(255 * (1 - v))) for v in nd)
         p = replace(p, **upd)
-        if abs(k - 1) < 0.04 and abs(kc - 1) < 0.03:
+        if (abs(k - 1) < 0.04 or not match_width) and abs(kc - 1) < 0.03:
             break
     return p, target
+
+
+def page_black(img, analysis=None):
+    """The darkest tone (0..1 of the paper around it) anything printed or written on this page
+    reaches. A scan stretches black to black (about 0); a phone photo of grey, unevenly lit
+    paper rarely gets below 0.15-0.25, and ink darker than that looks pasted on."""
+    gray = img.convert("L")
+    paper = gray.reduce(4).filter(ImageFilter.MaxFilter(9)).filter(ImageFilter.BoxBlur(4))
+    paper = paper.resize(gray.size, Image.BILINEAR)
+    rel = np.asarray(gray, np.float32) / np.maximum(np.asarray(paper, np.float32), 1)
+    if analysis and analysis.get("areas"):
+        # only the printed form itself: not the binding, the desk or shadows around the page
+        a = analysis["areas"]
+        x0, x1 = int(min(r["x0"] for r in a)), int(max(r["x1"] for r in a))
+        y0 = int(max(0, min(r["_ymid"] for r in a) - 40))
+        y1 = int(max(r["_ymid"] for r in a) + 40)
+        rel = rel[y0:y1, x0:x1]
+    ink = rel[rel < 0.65]
+    if ink.size < 200:
+        return None
+    return float(np.percentile(ink, 5))
 
 
 # ---------------------------------------------------------------- noise
@@ -217,8 +248,9 @@ class Row:
     area: int | None = None
 
 
-def _rows_for_area(a, size_px, style):
-    """One row for a line area; several bent rows for a box."""
+def _rows_for_area(a, size_px, style, spacing=None):
+    """One row for a line area; several bent rows for a box. spacing: the page's printed line
+    pitch; a box on a ruled form usually has faint lines at that pitch, so rows sit on them."""
     top, bot = a["top"], a["bottom"]
     lift = style.baseline * size_px
     # people leave a little room after a border or the start of a printed line
@@ -226,9 +258,21 @@ def _rows_for_area(a, size_px, style):
     if a["kind"] == "line":
         thick = bot.thickness / 2
         return [Row(x0, x1, lambda x, b=bot, l=lift + thick: b(x) - l, a["height"], a["id"])]
+    h = a["height"]
+    if spacing and 1.3 * size_px <= spacing <= 2.6 * size_px and h >= 1.5 * spacing:
+        # rows on the (often faint) ruled lines: counted up from the box's bottom edge
+        n = int((h - 0.9 * size_px) // spacing) + 1
+        rows = []
+        for k in reversed(range(n)):
+            f = 1 - k * spacing / h
+
+            def base(x, f=f):
+                return top(x) + (bot(x) - top(x)) * f - lift
+
+            rows.append(Row(x0, x1, base, spacing, a["id"]))
+        return rows
     # a box: rows evenly spaced, bending like the edges
     pitch = size_px * style.line_gap
-    h = a["height"]
     n = max(1, int((h - size_px * 0.4) // pitch))
     rows = []
     for k in range(n):
@@ -241,6 +285,92 @@ def _rows_for_area(a, size_px, style):
 
         rows.append(Row(x0, x1, base, pitch, a["id"]))
     return rows
+
+
+def _label_rows(a, rows, analysis, size_px, style):
+    """A box on a form often starts with a printed label at its left ("성질①", "설명"). People
+    write on the label's line, right after it, then on the rows below. Rows that would cut
+    through a label are moved onto its baseline."""
+    ink = analysis.get("_ink")
+    if ink is None or a["kind"] != "box" or not rows:
+        return rows
+    x0, x1 = int(a["x0"]), int(a["x1"])
+    left = x0 + int(0.16 * (x1 - x0))
+    y0, y1 = int(a["top"].mean_y()) + 3, int(a["bottom"].mean_y()) - 3
+    sub = ink[y0:y1, x0 + 3:left]
+    on = np.nonzero(sub.sum(1) > 1)[0]
+    if not len(on):
+        return rows
+    # label lines: runs of inked rows in the left strip
+    labels, start = [], on[0]
+    for i, j in zip(on, np.r_[on[1:], 10 ** 9]):
+        if j - i > 3:
+            if i - start >= 0.25 * size_px:
+                labels.append((y0 + start, y0 + i))
+            start = j
+    out = []
+    for lt, lb in labels:
+        cols = np.nonzero(ink[lt:lb + 1, x0 + 3:x1 - 3].any(0))[0]
+        # the label ends where its ink stops for more than a syllable
+        end = cols[0]
+        for c in cols:
+            if c - end > 1.2 * size_px:
+                break
+            end = c
+        lx = x0 + 3 + end + 0.5 * size_px
+        base_y = float(lb) + 1 - (a["top"].mean_y() * 0)
+        off = base_y - float(a["top"](float(lx)))
+        out.append(Row(lx, rows[0].x1, lambda x, o=off, t=a["top"]: t(x) + o, size_px * style.line_gap, a["id"]))
+    # keep the ruled rows that do not run into a label row
+    for r in rows:
+        y = r.base((r.x0 + r.x1) / 2)
+        if all(abs(y - (lb + 1)) > 0.8 * size_px for _, lb in labels):
+            out.append(r)
+    out.sort(key=lambda r: r.base((r.x0 + r.x1) / 2))
+    return out
+
+
+def _free_rows(rows, analysis, size_px):
+    """Keep rows off what is already on the page: a printed label ("성질①", "설명") or earlier
+    writing inside a box. Each row keeps its widest empty stretch, or is dropped when that is
+    too short to be worth writing in."""
+    ink = analysis.get("_ink")
+    if ink is None:
+        return rows
+    H, W = ink.shape
+    out = []
+    for r in rows:
+        x0, x1 = int(max(0, r.x0)), int(min(W, r.x1))
+        if x1 - x0 < size_px:
+            continue
+        xs = np.arange(x0, x1)
+        base = np.asarray([r.base(float(x)) for x in xs[::8]])
+        base = np.interp(xs, xs[::8], base)
+        top = np.clip((base - 0.95 * size_px).astype(int), 0, H - 1)
+        bot = np.clip((base + 0.1 * size_px).astype(int), 0, H - 1)
+        busy = np.array([ink[t:b, x].any() for x, t, b in zip(xs, top, bot)])
+        if not busy.any():
+            out.append(r)
+            continue
+        # widest empty stretch, after bridging the gaps inside a printed word
+        pad = int(0.5 * size_px)
+        grown = busy.copy()
+        for k in range(1, pad + 1):
+            grown[k:] |= busy[:-k]
+            grown[:-k] |= busy[k:]
+        best, run, start = (0, 0, 0), 0, 0
+        for i, b in enumerate(np.r_[grown, True]):
+            if not b:
+                if run == 0:
+                    start = i
+                run += 1
+            else:
+                if run > best[0]:
+                    best = (run, start, start + run)
+                run = 0
+        if best[0] >= max(3 * size_px, 0.35 * (x1 - x0)):
+            out.append(replace(r, x0=float(x0 + best[1]), x1=float(x0 + best[2])))
+    return out
 
 
 def _inset(x0, x1, size_px):
@@ -276,7 +406,9 @@ def _straight_rows(x0, y0, x1, y1, size_px, style, first_base=None):
 
 # ---------------------------------------------------------------- text layout
 
-TOKEN = re.compile(r"\$[^$]+\$|\S+|\n")
+# a word is everything between spaces; math inside it (which may hold spaces) stays glued to
+# the letters around it ("$\theta$에", "$x$)"), so no space is invented there
+TOKEN = re.compile(r"(?:\$[^$]+\$|[^\s$])+|\S")
 
 
 def _words(text):
@@ -306,10 +438,11 @@ class _Measure:
 
 def _split_long(word, room, meas):
     """Break a word that is wider than a whole row into character pieces."""
-    if word.startswith("$"):
+    atoms = re.findall(r"\$[^$]+\$|.", word)  # a piece of math is never cut
+    if len(atoms) == 1:
         return [word]
     pieces, cur = [], ""
-    for ch in word:
+    for ch in atoms:
         if cur and meas.width(cur + ch)[0] > room:
             pieces.append(cur)
             cur = ch
@@ -378,18 +511,30 @@ def track(st, style):
         shrink = 0.0
         if key == "math":
             out, shrink = _small_fractions(out, ids, style)
-        spans.append((x0, x1, ids, shrink))
+        first = st[ids[0]]
+        spans.append((x0, x1, ids, shrink, key != "math" and _hangul(first), first.get("sp")))
     spans.sort(key=lambda t: t[0])
     st = out
-    shift, right = 0.0, None
-    for x0, x1, ids, shrink in spans:
+    shift, right, prev_h = 0.0, None, None
+    for x0, x1, ids, shrink, is_h, sp in spans:
         if right is not None:
             gap = x0 - right
             if gap > 0:
-                shift -= gap * (1 - (style.tracking if gap < 0.35 else style.word_space))
+                # a typed space is a word gap; letters of one word close up (math runs carry no
+                # flag, so their gap decides)
+                word = sp if sp is not None else gap >= 0.35
+                new = gap * (style.word_space if word else style.tracking)
+                if word:
+                    # a space typed between symbols (tan θ = y/x) is a small gap in handwriting,
+                    # and no word gap is wider than a hand leaves
+                    new = min(max(new, 0.3), 0.3 if not (is_h or prev_h) else 0.65)
+                # letters never run into each other
+                new = max(new, min(gap, 0.08))
+                shift -= gap - new
         for i in ids:
             out[i] = dict(out[i], x=np.asarray(out[i]["x"], float) + shift)
         right = x1 if right is None else max(right, x1)
+        prev_h = is_h
         # what comes after a narrowed fraction moves up to it
         shift -= shrink
     return out
@@ -870,10 +1015,15 @@ def _following(analysis, a):
             continue
         out.append(b)
     out.sort(key=lambda b: b["_ymid"])
-    rows = []
+    sp = analysis.get("line_spacing") or 0
+    rows, edge = [], a["bottom"].mean_y()
     for b in out:
         if b["filled"] > 0.08:
             break
+        if a["kind"] == "box" and not rows and b["top"].mean_y() > edge + 0.5 * max(sp, 20):
+            break  # a box only runs on into lines that continue it directly below
+        if b["height"] < 0.6 * sp:
+            continue  # a sliver between a ruled line and a border is no row to write in
         rows.append(b)
     return rows
 
@@ -886,6 +1036,12 @@ def natural_size(analysis, style):
     if est:
         # same measurement as scanpage._letter_height on our own output gives the factor
         size = 0.3 * size + 0.7 * est * style.unit_per_height
+    else:
+        # nothing written yet: a photo's dpi is only a guess (margins, desk, perspective), the
+        # printed rows are not. On the scanned notes the writing is 0.6 of the row pitch.
+        rows = [a["height"] for a in analysis.get("areas", []) if a["kind"] == "line"]
+        if len(rows) >= 3:
+            size = min(size, 0.6 * float(np.median(rows)))
     return size
 
 
@@ -899,6 +1055,14 @@ def write(img, analysis, items, db, pen="ballpoint", style=DEFAULT_STYLE, seed=7
     measured = None
     if calibrate_pen:
         base_pen, measured = calibrate(img, analysis, base_pen, dpi, db)
+        if base_pen.name.startswith(("ballpoint", "gel")):
+            # a ballpoint or gel line is 0.25-0.45 mm whatever the measurement says (thin or blurred
+            # print on a form can pass for handwriting)
+            base_pen = replace(base_pen, width_mm=float(np.clip(base_pen.width_mm, 0.25, 0.45)))
+        floor = page_black(img, analysis)
+        if floor and base_pen.name in ("ballpoint", "gel", "fineliner"):
+            v = int(255 * floor)
+            base_pen = replace(base_pen, color=tuple(max(int(c), v) for c in base_pen.color))
     rng = random.Random(seed)
     nrng = np.random.default_rng(seed)
     strokes, report = [], {"items": [], "pen": base_pen.name, "pen_width_mm": round(base_pen.width_mm, 3),
@@ -932,25 +1096,36 @@ def write(img, analysis, items, db, pen="ballpoint", style=DEFAULT_STYLE, seed=7
             raise ValueError(f"Item {n}: needs text, mark, draw or erase")
         size = it.get("size_mm")
         size_px = float(size) * mm if size else None
-        rows = []
+        rows, rows_fn = [], None
         if "area" in it or "areas" in it:
             ids = it["areas"] if "areas" in it else [it["area"]]
             chosen = [_area_by_id(analysis, int(i)) for i in ids]
-            if "areas" not in it and it.get("continue", True) and chosen[0]["kind"] == "line":
+            if "areas" not in it and it.get("continue", True):
                 chosen += _following(analysis, chosen[0])
             if size_px is None:
                 lines = [a["height"] for a in chosen if a["kind"] == "line"]
                 size_px = natural_size(analysis, style)
                 if lines:
                     size_px = min(size_px, style.fill * float(np.median(lines)) / (1 - style.baseline))
-            for a in chosen:
-                if analysis["grid_paper"] and a["kind"] == "box":
-                    rows += _rows_grid(a, analysis, size_px, style)
-                else:
-                    rows += _rows_for_area(a, size_px, style)
-            if it.get("after_existing") and rows:
-                first = chosen[0]
-                rows[0] = replace(rows[0], x0=max(rows[0].x0, first["free_from_x"] + 0.4 * size_px))
+
+            ids_order = {a["id"]: k for k, a in enumerate(chosen)}
+
+            def rows_fn(sz, chosen=chosen, it=it, ids_order=ids_order):
+                out = []
+                for a in chosen:
+                    if analysis["grid_paper"] and a["kind"] == "box":
+                        out += _rows_grid(a, analysis, sz, style)
+                    else:
+                        out += _label_rows(a, _rows_for_area(a, sz, style, analysis.get("line_spacing")),
+                                           analysis, sz, style)
+                if it.get("after_existing") and out:
+                    out[0] = replace(out[0], x0=max(out[0].x0, chosen[0]["free_from_x"] + 0.4 * sz))
+                boxes = {a["id"] for a in chosen if a["kind"] == "box"}
+                free = _free_rows([r for r in out if r.area in boxes], analysis, sz)
+                return sorted([r for r in out if r.area not in boxes] + free,
+                              key=lambda r: (ids_order[r.area], r.base((r.x0 + r.x1) / 2)))
+
+            rows = rows_fn(size_px)
         elif "region" in it:
             x0, y0, x1, y1 = [float(v) for v in it["region"]]
             size_px = size_px or natural_size(analysis, style)
@@ -976,9 +1151,15 @@ def write(img, analysis, items, db, pen="ballpoint", style=DEFAULT_STYLE, seed=7
             if not (0 <= x < analysis["width"] and 0 <= y < analysis["height"]):
                 raise ValueError(f"Item {n}: 'at' is outside the page")
             bottom = max(y, analysis["height"] - 2 * mm)
-            rows = _straight_rows(x, y - size_px * 1.2, x + width, bottom, size_px, style, first_base=y)
-            rows = [replace(r, x0=x) for r in rows]
-            rows[0] = replace(rows[0], x0=x - style.indent * size_px)
+
+            def rows_fn(sz, x=x, y=y, width=width, bottom=bottom):
+                out = _straight_rows(x, y - sz * 1.2, x + width, bottom, sz, style, first_base=y)
+                out = [replace(r, x0=x) for r in out]
+                if out:
+                    out[0] = replace(out[0], x0=x - style.indent * sz)
+                return out
+
+            rows = rows_fn(size_px)
         else:
             raise ValueError(f"Item {n}: give area, areas, region or at")
         if not rows:
@@ -986,6 +1167,23 @@ def write(img, analysis, items, db, pen="ballpoint", style=DEFAULT_STYLE, seed=7
         placed, leftover, missing = layout_text(text, rows, size_px, db, style, seed + n)
         if missing:
             raise ValueError("Missing glyphs (nothing written): " + " ".join(sorted(missing)))
+        one_line = "at" in it and it.get("width") and "\n" not in text
+        if one_line and len(placed) > 1:
+            # a short entry in a small box ("2026" in a date field) is written smaller, not wrapped
+            leftover = leftover or " ".join(line for _, line in placed[1:])
+            placed = placed[:1]
+        if leftover and not size and rows_fn is not None:
+            # a writer running out of room writes a little smaller rather than stopping
+            for k in ((0.92, 0.85, 0.75, 0.65, 0.55) if "at" in it and it.get("width") else (0.92, 0.85)):
+                rows2 = rows_fn(size_px * k)
+                p2, l2, _ = layout_text(text, rows2, size_px * k, db, style, seed + n) if rows2 else (None, leftover, None)
+                if p2 is not None and one_line and len(p2) > 1:
+                    l2 = l2 or " ".join(line for _, line in p2[1:])
+                    p2 = p2[:1]
+                if p2 is not None and len(l2) < len(leftover):
+                    rows, placed, leftover, size_px = rows2, p2, l2, size_px * k
+                if not leftover:
+                    break
         boxes = []
         for k, (row, line) in enumerate(placed):
             st, _ = _place_line(line, row, size_px, db, style, rng, seed * 1000 + n * 50 + k)
@@ -993,7 +1191,8 @@ def write(img, analysis, items, db, pen="ballpoint", style=DEFAULT_STYLE, seed=7
             if st:
                 allp = np.vstack([q["points"] for q in st])
                 boxes.append([float(allp[:, 0].min()), float(allp[:, 1].min()), float(allp[:, 0].max()), float(allp[:, 1].max())])
-        rep = {"item": n, "rows_used": len(placed), "size_px": round(size_px, 1),
+        rep = {"item": n, "text": text if len(text) <= 120 else text[:117] + "...",
+               "rows_used": len(placed), "size_px": round(size_px, 1),
                "areas": sorted({r.area for r, _ in placed if r.area is not None})}
         if boxes:
             b = np.array(boxes)

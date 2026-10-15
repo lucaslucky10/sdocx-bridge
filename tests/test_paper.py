@@ -143,3 +143,33 @@ def test_style_overrides_are_checked(lib):
     assert st.x_scale == 0.9
     with pytest.raises(ValueError, match="Unknown style"):
         paper_tools.style_with(st, {"bogus": 1})
+
+
+def test_math_stays_glued_to_its_letters():
+    assert paper._words("각 $\\theta$에 대해 ($\\sin\\theta$, $\\cos\\theta$)") == \
+        ["각", "$\\theta$에", "대해", "($\\sin\\theta$,", "$\\cos\\theta$)"]
+
+
+def test_typed_spaces_between_symbols_stay_small(lib):
+    db = load_db(lib, "my-handwriting")
+    from handwriting_engine.compose import compose
+    st, _, _ = compose(db, "A = B", width=1e9, seed=1)
+    out = paper.track([s for s in st if "missing" not in s], paper.DEFAULT_STYLE)
+    spans = {}
+    for s in out:
+        spans.setdefault(s["glyph"], []).extend(np.asarray(s["x"]).tolist())
+    xs = sorted((min(v), max(v)) for v in spans.values())
+    gaps = [b[0] - a[1] for a, b in zip(xs, xs[1:])]
+    assert max(gaps) <= 0.31
+
+
+def test_photo_ink_is_not_darker_than_the_page():
+    page = Image.new("RGB", (600, 400), (170, 168, 165))
+    d = np.asarray(page).copy()
+    d[100:104, 50:550] = 40  # the darkest print on this "photo"
+    page = Image.fromarray(d)
+    assert 0.15 < paper.page_black(page) < 0.35
+    white = Image.new("RGB", (600, 400), (255, 255, 255))
+    w = np.asarray(white).copy()
+    w[100:104, 50:550] = 0
+    assert paper.page_black(Image.fromarray(w)) < 0.05

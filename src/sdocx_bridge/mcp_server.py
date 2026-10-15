@@ -293,8 +293,12 @@ def create_server(root, read_only=False, allow_dirs=None):
             "to read the printed form (titles, columns, boxes). 2) Decide what goes in each area: "
             + (f"the user asked for: {content}. " if content else "follow what the user asked. ")
             + "Write like a student's concept note: short phrases, key formulas in $...$, no full "
-            "sentences unless asked. Keep each line area to what fits; long text continues on the next "
-            "empty lines automatically. 3) write_on_scan(source, page, items=[{'area': id, 'text': ...}, "
+            "sentences unless asked. Put EVERY formula, variable and Greek letter in $...$ "
+            "($\\tan\\theta=y/x$, $x\\ne0$, $\\pi$), never as plain text like 'tan θ = y/x'. "
+            "Use area items, not 'at' coordinates: a box with a printed label (성질①, 설명) is written "
+            "after the label, one text per box with \\n between its lines; long text continues on the "
+            "empty lines below and is written a little smaller when room runs out. "
+            "3) write_on_scan(source, page, items=[{'area': id, 'text': ...}, "
             "{'mark': 'underline', 'box': [...]}, ...]) in ONE call per page; pen defaults to ballpoint "
             "and matches the ink already on the page. 4) Inspect the returned image (view_scan with the "
             "export_id and a region to zoom). Fix overflows (did_not_fit) or crowding by shortening text or "
@@ -468,7 +472,10 @@ def create_server(root, read_only=False, allow_dirs=None):
               {"draw": [[x,y], ...]}                a hand-drawn line through the points
               {"erase": [x0,y0,x1,y1]}              blank out (printed lines kept)
             Optional per item: "pen", "color" (name or #RRGGBB), "size_mm" (letter height).
-            Text: \\n for new lines, $...$ for math. pen: ballpoint, ballpoint-blue,
+            Text: \\n for new lines, $...$ for math (every formula, variable or Greek letter:
+            $\\tan\\theta=y/x$, not plain 'tan θ = y/x'). Prefer area items over 'at': in a box,
+            writing starts after a printed label such as 설명; text that does not fit is written a
+            little smaller first, and the report gives each item's text, size and did_not_fit. pen: ballpoint, ballpoint-blue,
             ballpoint-red, gel, gel-blue, pencil, fineliner, highlighter (or 볼펜, 파란볼펜, 연필 …).
             match_page_ink: copy the width and colour of the pen already used on the page.
             output: same | pdf | jpg | png. Returns the report (did_not_fit lists text that had
