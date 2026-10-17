@@ -294,7 +294,8 @@ def create_server(root, read_only=False, allow_dirs=None):
             + (f"the user asked for: {content}. " if content else "follow what the user asked. ")
             + "Write like a student's concept note: short phrases, key formulas in $...$, no full "
             "sentences unless asked. Put EVERY formula, variable and Greek letter in $...$ "
-            "($\\tan\\theta=y/x$, $x\\ne0$, $\\pi$), never as plain text like 'tan θ = y/x'. "
+            "($\\tan\\theta=\\frac{y}{x}$, $x\\ne0$, $\\pi$), never as plain text like 'tan θ = y/x'. "
+            "Write fractions with \\frac{..}{..} (a/b is turned into a stacked fraction anyway). "
             "Use area items, not 'at' coordinates: a box with a printed label (성질①, 설명) is written "
             "after the label, one text per box with \\n between its lines; long text continues on the "
             "empty lines below and is written a little smaller when room runs out. "
@@ -359,7 +360,9 @@ def create_server(root, read_only=False, allow_dirs=None):
             recordings and everything else are kept), or omitted for a new blank note.
             x, y: top-left of the writing box; width: box width (lines wrap inside it);
             size: letter height (default: the user's own size on that note, 22 pt on PDFs).
-            Use \\n for new lines and $...$ for math. color: black, blue, red, green or #RRGGBB.
+            Use \\n for new lines and $...$ for math: put every formula, variable and Greek letter in
+            $...$ and write fractions as \\frac{a}{b} (a/b is also written as a stacked fraction).
+            color: black, blue, red, green or #RRGGBB.
             Returns file paths and a preview image of the written page to check placement."""
             n = library.get(target_id) if target_id else None
             index = page_index(n, page) if n else 0
@@ -473,7 +476,7 @@ def create_server(root, read_only=False, allow_dirs=None):
               {"erase": [x0,y0,x1,y1]}              blank out (printed lines kept)
             Optional per item: "pen", "color" (name or #RRGGBB), "size_mm" (letter height).
             Text: \\n for new lines, $...$ for math (every formula, variable or Greek letter:
-            $\\tan\\theta=y/x$, not plain 'tan θ = y/x'). Prefer area items over 'at': in a box,
+            $\\tan\\theta=\\frac{y}{x}$, not plain 'tan θ = y/x'; fractions as \\frac). Prefer area items over 'at': in a box,
             writing starts after a printed label such as 설명; text that does not fit is written a
             little smaller first, and the report gives each item's text, size and did_not_fit. pen: ballpoint, ballpoint-blue,
             ballpoint-red, gel, gel-blue, pencil, fineliner, highlighter (or 볼펜, 파란볼펜, 연필 …).

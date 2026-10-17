@@ -102,6 +102,7 @@ def draw_pdf_ink(page, strokes, ink_annotations=True):
                 lineCap=1,
                 lineJoin=1,
                 stroke_opacity=s.get("opacity", 1),
+                closePath=False,  # PyMuPDF closes paths by default: a pen stroke is open
             )
     if shape is not None:
         shape.commit()

@@ -1,4 +1,4 @@
-# Validation — v0.3.3 (2026-10-15): paper scans and pen ink
+# Validation — v0.3.4 (2026-10-17): handwritten math layout; v0.3.3 (2026-10-15): paper scans and pen ink
 
 New: `analyze_scan`, `view_scan`, `write_on_scan`, `make_blank_page`, `pen_samples`, `learn_paper_style` (modules `handwriting_engine/scanpage.py`, `pen.py`, `paper.py`, `sdocx_bridge/paper_tools.py`). Run in a Linux container through an MCP client; Windows Claude Desktop not run. The owner's scans, glyph dictionary and comparison images are not in this repository.
 
@@ -11,7 +11,8 @@ New: `analyze_scan`, `view_scan`, `write_on_scan`, `make_blank_page`, `pen_sampl
 | Phone photo of a printed form (0.3.3) | owner's photo of the concept-note form (1500×2000, grey paper): written ink was pure black (0-5 on paper 182) against print at 60-80; now no darker than the darkest 5% of the page (photo ≈0.15 of paper, scans 0). Ballpoint width kept to 0.25-0.45 mm. Plain-text formulas (`tan θ = y/x`) no longer get word-sized gaps, math is not split from the letters next to it, rows in a box start after a printed label (성질①, 설명) and run on into the ruled lines below, small fields (date) shrink to one line, overflowing text is written up to 15% smaller before did_not_fit. Checked by eye on the owner's blank form; scan fit unchanged (row width 1.02, word width 1.00) |
 | Pen width and colour | measured from the ink already on the page (skeleton length vs ink area) and matched by rendering and re-measuring (closed loop) |
 | Scanned PDF output | the page image is replaced in place (same size, same JPEG tables when the source is JPEG); other pages untouched; result can be written on again by `export_id` |
-| Full test suite | 77 passed, 1 skipped |
+| Math in tablet notes (0.3.4) | owner's test note (201 pages; pages 37-170 written by Claude with 0.3.3) read page by page: fractions typed as `a/b` came out as slashes, numerators and denominators kept TeX's wide spaces around + and -, a minus or plus ran into the next fraction bar, a gap was left between a number and √, integral limits pushed the integrand away, and page previews closed every stroke into a loop (a 3 looked like B, curves got a straight chord). Now: `a/b` in and outside `$...$` is written as a stacked fraction; spacing follows MathJax's structure (each numerator, denominator, root body, limit and script spaced on its own, then centred on its bar); fractions are 0.88 of the line height and sit close to their bar; brackets around a fraction grow; preview strokes stay open. Checked by eye on the same formulas written by 0.3.3 and 0.3.4 on page 112 of the owner's textbook note; letter shapes unchanged |
+| Full test suite | 84 passed, 1 skipped |
 
 Known limits: written text is a little more regular than real writing; characters missing from the glyph dictionary stop the write (nothing is written) and are named; very small or dense printed text inside a row is not distinguished from handwriting, so `filled` can be high for rows with printed text near the line; photos taken at an angle are not flattened (lines may be curved but the page is assumed roughly frontal).
 
