@@ -219,6 +219,54 @@ def _accent_bases(items):
     return out
 
 
+def _compact_fractions(items, paths, f=0.88, gap=100.0):
+    """Hand-written fractions are smaller than TeX's display fractions and sit close to their bar.
+    Shrinks every full-size fraction (not those already small in a script) by f about its bar and
+    moves the numerator down and the denominator up to gap (em/1000) from the bar.
+    Returns the new items and a size factor per item; positions are changed, the TeX size is kept
+    so sub/superscripts are still told apart by size."""
+    items = list(items)
+    mul = [1.0] * len(items)
+    groups = {}
+    for i, (it, p) in enumerate(zip(items, paths)):
+        if it is None:
+            continue
+        top = next(((n, d) for d, (n, kind, _) in enumerate(p) if kind == 'frac'), None)
+        if top is not None:
+            groups.setdefault(top, []).append(i)
+    for (nid, d), ids in groups.items():
+        bars = [i for i in ids if len(paths[i]) == d + 1 and paths[i][d][2] == 'bar']
+        glyphs = [i for i in ids if items[i][0] == 'glyph']
+        if not bars or not glyphs or max(items[i][4] for i in glyphs) < 0.9:
+            continue
+        b = items[bars[0]]
+        axis, half = (b[2] + b[4]) / 2, (b[4] - b[2]) / 2
+
+        def ys(it):
+            return (it[5][1], it[5][3]) if it[0] == 'glyph' else (it[2], it[4])
+
+        for role, sign in (('num', 1), ('den', -1)):
+            part = [i for i in ids if paths[i][d][2] == role]
+            if not part:
+                continue
+            near = [axis + (y - axis) * f for i in part for y in ys(items[i])]
+            # numerator: its lowest point to axis + half + gap; denominator: its highest to axis - half - gap
+            edge = min(near) if sign > 0 else max(near)
+            dy = axis + sign * (half + gap) - edge
+            for i in part:
+                it = items[i]
+                t = lambda y: axis + (y - axis) * f + dy  # noqa: E731
+                if it[0] == 'glyph':
+                    _, ch, ox, oy, sc, bb = it
+                    c = (bb[0] + bb[2]) / 2
+                    items[i] = ('glyph', ch, ox, t(oy), sc,
+                                (c - (c - bb[0]) * f, t(bb[1]), c + (bb[2] - c) * f, t(bb[3])))
+                    mul[i] = f
+                else:
+                    items[i] = ('rule', it[1], t(it[2]), it[3], t(it[4]))
+    return items, mul
+
+
 def _script_parent(items, i):
     """The full-size glyph a sub/superscript belongs to: the last glyph before it, set larger and ending
     where the script starts. Limits under Σ or lim sit inside their operator's width and get none."""
@@ -244,6 +292,10 @@ def sqrt_parts(g):
     near = np.where(pts[:, 1] <= top + 0.15 * h)[0]
     ci = int(near[np.argmin(pts[near, 0])]) if len(near) else int(np.argmin(pts[:, 1]))
     hook, bar = pts[:ci + 1], pts[ci:]
+    # the bar stays near the top; a sample that runs on into a second check mark is cut there
+    low = np.where(bar[:, 1] > top + 0.25 * h)[0]
+    if len(low):
+        bar = bar[:low[0]]
     if len(bar) < 2:
         bar = np.array([pts[ci], pts[ci] + [0.3, 0]])
     return hook, bar
@@ -344,9 +396,12 @@ def _tex_svg_node(tex, display):
         raise ValueError('LaTeX renderer failed. Check the optional MathJax installation and formula.') from exc
 
 
-def tex_layout(tex, display=False):
+def tex_layout(tex, display=False, structure=False):
     """Typeset with MathJax. Returns list of items in em/1000 units (y up):
-    ('glyph', char, origin_x, origin_y, scale, bbox) and ('rule', x0, y0, x1, y1)."""
+    ('glyph', char, origin_x, origin_y, scale, bbox) and ('rule', x0, y0, x1, y1).
+    With structure=True also returns, per item, its path through the fractions and roots it sits in
+    (tuples (node id, 'frac' | 'sqrt' | 'script' | 'limits', role)) and the token it belongs to (one id per multi-letter
+    word such as lim, sin, ln or number such as 0.8), so handwriting can space each part on its own."""
     try:
         import py_mini_racer  # noqa: F401
         v8 = os.path.isfile(BUNDLE) and 'HW_TEX2SVG' not in os.environ
@@ -370,11 +425,51 @@ def tex_layout(tex, display=False):
     if any(el.tag.rsplit('}', 1)[-1] in ('text', 'image', 'foreignObject') for el in root.iter()):
         raise ValueError('LaTeX contains unsupported text or images. Put Korean text outside $...$; no formula content was omitted.')
     ns = '{http://www.w3.org/2000/svg}'
-    items = []
+    items, paths, toks = [], [], []
+    counter = [0]
 
-    def walk(el, M):
+    def roles(el, kind):
+        """Role of each child of a fraction, root or script node."""
+        kids = list(el)
+        out, groups = [], 0
+        for c in kids:
+            tag = c.tag.replace(ns, '')
+            if kind in ('script', 'limits'):
+                rise = _parse_transform(c.get('transform'))[1, 2]
+                if groups == 0:
+                    out.append('base')
+                elif kind == 'script':
+                    out.append('sup' if rise > 0 else 'sub')
+                else:
+                    out.append('over' if rise > 0 else 'under')
+                groups += 1
+            elif tag == 'rect':
+                out.append('bar')
+            elif kind == 'sqrt' and c.get('data-mml-node') == 'mo':
+                out.append('surd')
+            elif kind == 'frac':
+                out.append('num' if groups == 0 else 'den')
+                groups += 1
+            else:
+                out.append('body' if groups == 0 else 'index')
+                groups += 1
+        return out
+
+    def walk(el, M, path=(), tok=None):
         M = M @ _parse_transform(el.get('transform'))
         tag = el.tag.replace(ns, '')
+        node = el.get('data-mml-node')
+        if node in ('mi', 'mn', 'mo') and sum(1 for c in el if c.tag.replace(ns, '') == 'path') > 1:
+            counter[0] += 1
+            tok = counter[0]
+        if node in ('mfrac', 'msqrt', 'mroot', 'msub', 'msup', 'msubsup', 'munder', 'mover', 'munderover'):
+            counter[0] += 1
+            kind = {'mfrac': 'frac', 'msqrt': 'sqrt', 'mroot': 'sqrt', 'munder': 'limits', 'mover': 'limits',
+                    'munderover': 'limits'}.get(node, 'script')
+            nid = counter[0]
+            for c, role in zip(el, roles(el, kind)):
+                walk(c, M, path + ((nid, kind, role),), tok)
+            return
         if tag == 'path' and el.get('data-c'):
             bb = _path_bbox(el.get('d', ''))
             if bb:
@@ -384,13 +479,17 @@ def tex_layout(tex, display=False):
                 p1 = M @ np.array([bb[2], bb[3], 1])
                 items.append(('glyph', _char_from_codepoint(cp), o[0], o[1], abs(M[0, 0]),
                               (min(p0[0], p1[0]), min(p0[1], p1[1]), max(p0[0], p1[0]), max(p0[1], p1[1]))))
+                paths.append(path)
+                toks.append(tok)
         elif tag == 'rect':
             x, y = float(el.get('x', 0)), float(el.get('y', 0))
             w, h = float(el.get('width', 0)), float(el.get('height', 0))
             p0 = M @ np.array([x, y, 1]); p1 = M @ np.array([x + w, y + h, 1])
             items.append(('rule', min(p0[0], p1[0]), min(p0[1], p1[1]), max(p0[0], p1[0]), max(p0[1], p1[1])))
+            paths.append(path)
+            toks.append(None)
         for c in el:
-            walk(c, M)
+            walk(c, M, path, tok)
 
     walk(root, np.eye(3))
     # the top group flips y (scale(1,-1)); convert so that y is up = positive
@@ -402,6 +501,8 @@ def tex_layout(tex, display=False):
         else:
             _, x0, y0, x1, y1 = it
             fixed.append(('rule', x0, -y1, x1, -y0))
+    if structure:
+        return fixed, paths, toks
     return fixed
 
 
@@ -418,18 +519,20 @@ def pen_line(x0, y0, x1, y1, w, rng, color=INK):
 
 
 
-def _close_gaps(spans, max_gap, rows=None, min_gap=0.0, elastic=()):
+def _close_gaps(spans, max_gap, rows=None, min_gap=0.0, elastic=(), gaps=None):
     """TeX puts wide spaces around = + etc.; handwriting does not. Given each item's ink span (x0, x1),
     return a left shift per item that shrinks every horizontal gap to at most max_gap, keeping stacked
     items (fractions) together. With rows (each item's y0, y1), items side by side on the same row whose
     handwritten ink would overlap are pushed apart to at least min_gap. Items in elastic (root overlines)
-    stretch to what they cover, so they never hold the items after them apart."""
+    stretch to what they cover, so they never hold the items after them apart. gaps: an optional
+    smaller largest gap before some items (letters inside one word such as lim or sin)."""
     order = sorted(range(len(spans)), key=lambda i: spans[i][0])
     shift, reach, total, placed = [0.0] * len(spans), None, 0.0, []
     for i in order:
         a, b = spans[i]
-        if reach is not None and a - total - reach > max_gap:
-            total += (a - total - reach) - max_gap
+        mg = gaps[i] if gaps is not None and gaps[i] is not None else max_gap
+        if reach is not None and a - total - reach > mg:
+            total += (a - total - reach) - mg
         if rows is not None:
             y0, y1 = rows[i]
             for pb, q0, q1 in placed:
@@ -443,16 +546,150 @@ def _close_gaps(spans, max_gap, rows=None, min_gap=0.0, elastic=()):
     return shift
 
 
+def _structured_shifts(spans, rows, paths, toks, max_gap, word_gap, min_gap, bar_pad, root_gap, script_gap=0.0,
+                       block_pad=0.0, chars=None):
+    """Spacing that follows the formula's structure. A numerator, a denominator and what is under a
+    root are each spaced on their own (TeX's wide spaces around + and = would otherwise survive wherever
+    the other half of the fraction lies below them) and then centred again over their bar; a fraction or
+    a root is then spaced as one block among its neighbours, so nothing runs into a bar. Sub- and
+    superscripts start right after their base, one above the other (an integral's limits hug its sign).
+    spans may be changed for rules: a bar is cut to what it covers. Returns a left shift per item."""
+    n = len(spans)
+    spans = [list(sp) for sp in spans]
+    shift = [0.0] * n
+
+    def final(i):
+        return spans[i][0] - shift[i], spans[i][1] - shift[i]
+
+    def move(ids, d):
+        for i in ids:
+            shift[i] += d
+
+    def arrange(ids, depth):
+        """Space the items in ids (all inside the same parts of the same fractions/roots down to depth).
+        Returns (members, (x0, x1), (y0, y1)) in final coordinates."""
+        units, groups = [], {}
+        for i in ids:
+            p = paths[i]
+            if len(p) > depth:
+                nid, kind, role = p[depth]
+                if nid not in groups:
+                    groups[nid] = (kind, {})
+                    units.append(('g', nid))
+                groups[nid][1].setdefault(role, []).append(i)
+            else:
+                units.append(('a', i))
+        members, uspans, urows, utok = [], [], [], []
+        for typ, v in units:
+            if typ == 'a':
+                members.append([v])
+                uspans.append(final(v))
+                urows.append(rows[v])
+                utok.append(toks[v])
+            else:
+                kind = groups[v][0]
+                m, sp, rw = block(*groups[v], depth + 1)
+                members.append(m)
+                pad = block_pad if kind in ('frac', 'sqrt') else 0.0  # air between a bar and a sign
+                uspans.append((sp[0] - pad, sp[1] + pad))
+                urows.append(rw)
+                utok.append(None)
+        gaps = [None] * len(units)
+        order = sorted(range(len(units)), key=lambda u: uspans[u][0])
+        for a, b in zip(order, order[1:]):
+            if utok[b] is not None and utok[b] == utok[a]:
+                gaps[b] = word_gap
+        d = _close_gaps(uspans, max_gap, rows=urows, min_gap=min_gap, gaps=gaps)
+        for m, dd in zip(members, d):
+            move(m, dd)
+        flat = [i for m in members for i in m]
+        x0 = min(uspans[u][0] - d[u] for u in range(len(units)))
+        x1 = max(uspans[u][1] - d[u] for u in range(len(units)))
+        return flat, (x0, x1), (min(r[0] for r in urows), max(r[1] for r in urows))
+
+    def block(kind, parts, depth):
+        bars = parts.get('bar', [])
+        if kind == 'frac' and bars and parts.get('num') and parts.get('den'):
+            b = bars[0]
+            bc = sum(final(b)) / 2
+            laid = [arrange(parts[r], depth) for r in ('num', 'den')]
+            for (m, sp, _), r in zip(laid, ('num', 'den')):
+                move(m, (sp[0] + sp[1]) / 2 - bc)
+            half = max(sp[1] - sp[0] for _, sp, _ in laid) / 2 + bar_pad
+            for b2 in bars:  # the bar covers what is written above and below it, no more
+                spans[b2] = [bc - half + shift[b2], bc + half + shift[b2]]
+            ids = [i for m, _, _ in laid for i in m] + bars
+            y0 = min(min(rw[0] for _, _, rw in laid), min(rows[i][0] for i in bars))
+            y1 = max(max(rw[1] for _, _, rw in laid), max(rows[i][1] for i in bars))
+            return ids, (bc - half, bc + half), (y0, y1)
+        if kind == 'sqrt' and parts.get('body') and parts.get('surd'):
+            m, sp, rw = arrange(parts['body'], depth)
+            surd = parts['surd']
+            # the check mark ends where what is under it starts
+            move(surd + parts.get('index', []), max(final(i)[1] for i in surd) - (sp[0] - root_gap))
+            if parts.get('index'):  # the index (∛) sits in the crook of the check mark
+                sx0, sx1 = min(final(i)[0] for i in surd), max(final(i)[1] for i in surd)
+                move(parts['index'], max(final(i)[1] for i in parts['index']) - (sx0 + 0.45 * (sx1 - sx0)))
+            for b2 in bars:  # the overline runs from the check mark to just past the last symbol
+                spans[b2] = [sp[0] - root_gap + shift[b2], sp[1] + bar_pad + shift[b2]]
+            ids = m + surd + parts.get('index', []) + bars
+            x0 = min(final(i)[0] for i in surd + parts.get('index', []))
+            y0 = min([rw[0]] + [rows[i][0] for i in surd + bars])
+            y1 = max([rw[1]] + [rows[i][1] for i in surd + bars])
+            return ids, (x0, sp[1] + bar_pad), (y0, y1)
+        if kind == 'script' and parts.get('base') and (parts.get('sub') or parts.get('sup')):
+            m, bsp, brow = arrange(parts['base'], depth)
+            ids, x1, y0, y1 = list(m), bsp[1], brow[0], brow[1]
+            integral = chars is not None and any(chars[i] is not None and chars[i] in '∫∮∬∭' for i in parts['base'])
+            for r in ('sup', 'sub'):
+                if not parts.get(r):
+                    continue
+                sm, ssp, srow = arrange(parts[r], depth)
+                # the pen's own width keeps neighbours apart: script_gap is the gap between the strokes' centres
+                start = bsp[1] + (script_gap if r == 'sup' else 0.7 * script_gap)
+                if integral and r == 'sub':  # the lower limit tucks in by the foot of the sign
+                    start = bsp[1] + 0.4 * script_gap
+                move(sm, ssp[0] - start)
+                ids += sm
+                x1 = max(x1, start + ssp[1] - ssp[0])
+                y0, y1 = min(y0, srow[0]), max(y1, srow[1])
+            return ids, (bsp[0], x1), (y0, y1)
+        if kind == 'limits' and parts.get('base') and (parts.get('under') or parts.get('over')):
+            # lim, sums, accents: what is written under and over is spaced on its own, centred on the base
+            m, bsp, brow = arrange(parts['base'], depth)
+            ids, x0, x1, y0, y1 = list(m), bsp[0], bsp[1], brow[0], brow[1]
+            bc = (bsp[0] + bsp[1]) / 2
+            for r in ('under', 'over'):
+                if parts.get(r):
+                    sm, ssp, srow = arrange(parts[r], depth)
+                    move(sm, (ssp[0] + ssp[1]) / 2 - bc)
+                    ids += sm
+                    half = (ssp[1] - ssp[0]) / 2
+                    x0, x1 = min(x0, bc - half), max(x1, bc + half)
+                    y0, y1 = min(y0, srow[0]), max(y1, srow[1])
+            return ids, (x0, x1), (y0, y1)
+        # anything else (\binom, a lone root sign): drop this level and space it as one row
+        ids = [i for r in parts.values() for i in r]
+        for i in ids:
+            paths[i] = paths[i][:depth - 1] + paths[i][depth:]
+        return arrange(ids, depth - 1)
+
+    paths = list(paths)
+    arrange(list(range(n)), 0)
+    return shift, spans
+
+
 def math_strokes(db, tex, rng, x, base, jitter=1.0, missing=None, em_to_u=None, squeeze=0.8, color=INK,
                  synth_color=None):
     """Lay out TeX at (x, baseline). Returns (strokes, width).
     Fractions are set full size (\\displaystyle), as they are written by hand."""
-    items = tex_layout('\\displaystyle ' + tex)
+    items, ipaths, itoks = tex_layout('\\displaystyle ' + grow_brackets(tex), structure=True)
+    items, fmul = _compact_fractions(items, ipaths)
     # 1u (Hangul height) ~ height of a digit (0.666 em in TeX fonts)
     k = em_to_u or (1.0 / 666.0)
     kx = k * squeeze  # handwriting is set tighter than TeX
     # choose the handwritten glyph for every item first, so spacing can follow the real ink widths
-    plan, spans, rows = [], [], []
+    plan, spans, rows, ppaths, ptoks = [], [], [], [], []
     items = list(items)
     accents = _accent_bases(items)
     for ai, bi in accents.items():
@@ -464,6 +701,8 @@ def math_strokes(db, tex, rng, x, base, jitter=1.0, missing=None, em_to_u=None, 
     for i, it in enumerate(items):
         if it is None:
             continue
+        ppaths.append(ipaths[i])
+        ptoks.append(itoks[i])
         if it[0] == 'rule':
             plan.append(it)
             spans.append((it[1], it[3]))
@@ -480,6 +719,7 @@ def math_strokes(db, tex, rng, x, base, jitter=1.0, missing=None, em_to_u=None, 
                 ch, s, oy = '_' + ch, p[4], p[3]
             elif 120 < rise < 700 and '^' + ch in db.by:
                 ch, s, oy = '^' + ch, p[4], p[3]
+        s *= fmul[i]  # a fraction's symbols are written smaller than the line
         g = db.pick(ch, rng) if ch != '√' and db.has(ch) else None
         mode, sx, sy = 'base', s, s
         if g is not None:
@@ -500,10 +740,16 @@ def math_strokes(db, tex, rng, x, base, jitter=1.0, missing=None, em_to_u=None, 
                     sx = sy = s = max(1.2 * tw, tw + 0.2) / g['adv']
         c = (bb[0] + bb[2]) / 2
         half = g['adv'] * sx / kx / 2 if g else (bb[2] - bb[0]) / 2
+        if ch == '√' and db.by.get('√'):
+            g = rng.choice(db.by['√'])  # chosen now so the spacing knows how wide its check mark is
         plan.append(('glyph', ch, oy, s, bb, g, mode, sx, sy))
         if ch == '√' and db.by.get('√'):
             # the handwritten radical is a narrow check mark at the right end of TeX's wide surd
-            spans.append((bb[2] - 0.3 * (bb[3] - bb[1]) * k / kx, bb[2]))
+            hook, _ = sqrt_parts(g)
+            sc = (bb[3] - bb[1]) * k / max(np.ptp(hook[:, 1]), 1e-6) * 0.9
+            # the corner is drawn at TeX's right edge; a slanted stem can reach a little past it
+            spans.append((bb[2] - (hook[-1, 0] - hook[:, 0].min()) * sc / kx,
+                          bb[2] + max(0.0, hook[:, 0].max() - hook[-1, 0]) * sc / kx))
         else:
             spans.append((c - half, c + half))
         rows.append((bb[1], bb[3]))
@@ -512,13 +758,19 @@ def math_strokes(db, tex, rng, x, base, jitter=1.0, missing=None, em_to_u=None, 
     roots = [it[4] for it in plan if it[0] == 'glyph' and it[1] == '√']
     elastic = {i for i, it in enumerate(plan) if it[0] == 'rule'
                and any(abs(it[1] - bb[2]) < 80 and abs(it[4] - bb[3]) < 80 for bb in roots)}
-    shift = _close_gaps(spans, max_gap=db.gap * 1.2 / kx, rows=rows, min_gap=0.12 / kx, elastic=elastic)
+    shift, spans = _structured_shifts(spans, rows, ppaths, ptoks, max_gap=db.gap * 1.2 / kx,
+                                      word_gap=db.gap * 0.6 / kx, min_gap=0.14 / kx, bar_pad=0.08 / kx,
+                                      root_gap=0.15 / kx, script_gap=0.1 / kx, block_pad=0.06 / kx,
+                                      chars=[it[1] if it[0] == 'glyph' else None for it in plan])
+    if elastic and not any(ppaths[i] for i in elastic):  # a root MathJax set without a msqrt node
+        shift = _close_gaps(spans, max_gap=db.gap * 1.2 / kx, rows=rows, min_gap=0.12 / kx, elastic=elastic)
+    fitted = {i for i, p in enumerate(ppaths) if p and p[-1][2] == 'bar'}  # bars already cut to their contents
     strokes = []
     right = x
     rules, inks, pending_root = [], [], {}
-    for it, d in zip(plan, shift):
+    for idx, (it, d) in enumerate(zip(plan, shift)):
         if it[0] == 'rule':
-            rules.append((it, d))
+            rules.append((it, d, idx))
             continue
         _, ch, oy, s, bb, g, mode, sx, sy = it
         gx0, gx1 = x + (bb[0] - d) * kx, x + (bb[2] - d) * kx
@@ -527,7 +779,7 @@ def math_strokes(db, tex, rng, x, base, jitter=1.0, missing=None, em_to_u=None, 
             # whatever is under the root (joined to the overline rule below)
             right = max(right, gx1)
             y_top, y_bot = base - bb[3] * k, base - bb[1] * k
-            hook, bar = sqrt_parts(rng.choice(db.by['√']))
+            hook, bar = sqrt_parts(g)
             sc = (y_bot - y_top) / max(np.ptp(hook[:, 1]), 1e-6)
             hx = gx1 + (hook[:, 0] - hook[-1, 0]) * sc * 0.9
             hy = y_top + (hook[:, 1] - hook[:, 1].min()) * sc
@@ -566,11 +818,13 @@ def math_strokes(db, tex, rng, x, base, jitter=1.0, missing=None, em_to_u=None, 
         strokes.extend(st)
         right = max(right, cxm + w / 2)
         inks.append((bb[0], bb[2], cxm - w / 2, cxm + w / 2))
-    for rule, d in rules:
+    for rule, d, idx in rules:
         _, x0, y0, x1, y1 = rule
         # a fraction bar spans what is written above and below it
-        a, b = x + (x0 - d) * kx, x + (x1 - d) * kx
+        a, b = x + (spans[idx][0] - d) * kx, x + (spans[idx][1] - d) * kx
         cov = [(ia, ib) for t0, t1, ia, ib in inks if t0 >= x0 - 1 and t1 <= x1 + 1]
+        if idx in fitted:
+            cov = []
         if cov:
             a = min(a, min(c[0] for c in cov) - 0.08)
             b = max(b, max(c[1] for c in cov) + 0.08)
@@ -600,6 +854,183 @@ def math_strokes(db, tex, rng, x, base, jitter=1.0, missing=None, em_to_u=None, 
     return strokes, right - x
 
 
+# ---------------------------------------------------------------- a/b as a written fraction
+
+_TEX_TOKEN = re.compile(r'\\[A-Za-z]+\*?|\\.|\s+|\d+(?:\.\d+)?|.', re.S)
+# signs that end a numerator to the left of '/' (relations, + and -, separators, opening brackets)
+_SPLIT = {'+', '-', '=', '<', '>', ',', ';', ':', '(', '[', '\\{', '|', '\\pm', '\\mp', '\\cdot', '\\times',
+          '\\div', '\\le', '\\leq', '\\ge', '\\geq', '\\ne', '\\neq', '\\approx', '\\to', '\\rightarrow',
+          '\\Rightarrow', '\\iff', '\\equiv', '\\sim', '\\quad', '\\qquad', '\\left', '\\right', '\\,', '\\;',
+          '\\!', '\\ ', '&', '\\\\', '\\lim', '\\sum', '\\int', '\\prod'}
+_PAIRS = {'(': ')', '[': ']', '{': '}'}
+
+
+def _tex_atoms(tex):
+    """Split TeX into atoms: a braced or bracketed group, a command with its braced arguments, a number,
+    a letter with its sub/superscripts. Whitespace is kept as its own atom."""
+    toks = _TEX_TOKEN.findall(tex)
+    atoms, i = [], 0
+
+    def group(i):
+        """toks[i] opens a group; return the index after its closing token."""
+        opener, depth = toks[i], 0
+        closer = _PAIRS[opener]
+        for j in range(i, len(toks)):
+            if toks[j] == opener:
+                depth += 1
+            elif toks[j] == closer:
+                depth -= 1
+                if depth == 0:
+                    return j + 1
+        return len(toks)
+
+    while i < len(toks):
+        t = toks[i]
+        if t == '{':
+            j = group(i)
+        elif t == '(' or t == '[':
+            j = group(i)
+        elif t.startswith('\\') and t[1:].isalpha() and t not in _SPLIT:
+            j = i + 1
+            while j < len(toks) and toks[j] == '{':  # \sqrt{..}, \frac{..}{..}
+                j = group(j)
+        else:
+            j = i + 1
+        # scripts stay with what they belong to
+        while j < len(toks) and toks[j] in ('^', '_') and j + 1 < len(toks):
+            j = group(j + 1) if toks[j + 1] == '{' else j + 2
+        atoms.append(''.join(toks[i:j]))
+        i = j
+    return atoms
+
+
+def _unwrap(atom):
+    """(a+b) or {a+b} written as one fraction part loses its brackets."""
+    if len(atom) > 1 and atom[0] in '({' and _PAIRS[atom[0]] == atom[-1]:
+        inner = atom[1:-1]
+        depth = 0
+        for c in inner:  # only when the brackets enclose the whole atom
+            depth += {'(': 1, '{': 1, ')': -1, '}': -1}.get(c, 0)
+            if depth < 0:
+                return atom
+        return inner
+    return atom
+
+
+def slash_fractions(tex):
+    """Write a/b the way it is written by hand: as \\frac{a}{b}. The numerator is the run of symbols
+    back to the last sign (+ - = , ( ...) and the denominator the one symbol or bracket after the slash,
+    so 2e^{-x}/(1-e^{-x}) and \\pi/4 become stacked fractions. Groups are converted inside too."""
+    if '/' not in tex:
+        return tex
+    atoms = _tex_atoms(tex)
+    out = []
+    for a in atoms:  # inside braces first (limits such as ^{\\pi/2})
+        if len(a) > 2 and '/' in a and a[0] in '{([' and a[-1] == _PAIRS[a[0]]:
+            a = a[0] + slash_fractions(a[1:-1]) + a[-1]
+        elif '/' in a and ('^{' in a or '_{' in a):
+            head = re.match(r'^(.*?)([_^])\{(.*)\}$', a, re.S)
+            if head:
+                a = head.group(1) + head.group(2) + '{' + slash_fractions(head.group(3)) + '}'
+        out.append(a)
+    atoms = out
+    i = 0
+    while i < len(atoms):
+        if atoms[i] != '/':
+            i += 1
+            continue
+        j = i - 1
+        while j >= 0 and atoms[j].isspace():
+            j -= 1
+        k = j
+        while k >= 0 and atoms[k] not in _SPLIT and atoms[k] != '/':
+            k -= 1
+        while atoms[k + 1].isspace():
+            k += 1
+        num = ''.join(atoms[k + 1:j + 1])
+        d = i + 1
+        while d < len(atoms) and atoms[d].isspace():
+            d += 1
+        if not num or d >= len(atoms) or atoms[d] in _SPLIT or atoms[d] == '/':
+            i += 1
+            continue
+        den = atoms[d]
+        if (re.fullmatch(r'[A-Za-z]|\\[A-Za-z]+', den) and d + 1 < len(atoms) and atoms[d + 1][:1] == '('
+                and den not in ('\\ln', '\\log', '\\sin', '\\cos', '\\tan')):
+            den, d = den + atoms[d + 1], d + 1  # 1/g(x): the function with its argument
+        if den in ('\\ln', '\\log', '\\sin', '\\cos', '\\tan') and d + 1 < len(atoms):
+            e = d + 1  # 1/\\ln 3: the function and its argument
+            while e < len(atoms) and atoms[e].isspace():
+                e += 1
+            if e < len(atoms):
+                den, d = ''.join(atoms[d:e + 1]), e
+        if len(atoms[k + 1:j + 1]) == 1:
+            num = _unwrap(num)
+        frac = '\\frac{' + num + '}{' + _unwrap(den) + '}'
+        atoms[k + 1:d + 1] = [frac]
+        i = k + 2
+    return ''.join(atoms)
+
+
+def grow_brackets(tex):
+    """Brackets around a fraction are written as tall as the fraction: ( ) and [ ] that hold a \\frac
+    become \\left( \\right). Pairs that cross a brace group, or are sized already, are left alone."""
+    if '\\frac' not in tex:
+        return tex
+    stack, pairs, depth, i = [], [], 0, 0
+    while i < len(tex):
+        c = tex[i]
+        if c == '\\':
+            m = re.match(r'\\(left|right|big|Big|bigg|Bigg)[lr]?\b', tex[i:]) or re.match(r'\\[A-Za-z]+|\\.', tex[i:])
+            i += len(m.group(0)) if m else 1
+            if m and m.group(0).rstrip('lr') in ('\\left', '\\right', '\\big', '\\Big', '\\bigg', '\\Bigg'):
+                i += 1  # the bracket it sizes
+            continue
+        if c == '{':
+            depth += 1
+        elif c == '}':
+            depth -= 1
+            while stack and stack[-1][1] > depth:
+                stack.pop()
+        elif c in '([':
+            stack.append((i, depth, c))
+        elif c in ')]':
+            if stack and stack[-1][1] == depth and _PAIRS[stack[-1][2]] == c:
+                j = stack.pop()[0]
+                if '\\frac' in tex[j:i]:
+                    pairs.append((j, i))
+        i += 1
+    out = list(tex)
+    for j, k in pairs:
+        out[j] = '\\left' + tex[j]
+        out[k] = '\\right' + tex[k]
+    return ''.join(out)
+
+
+# a/b typed outside $...$ (1/2, a/2, π/4): only single numbers, letters or Greek letters
+_TEXT_SLASH = re.compile(r'(?<![\w./])(\d+(?:\.\d+)?|[A-Za-zα-ωπθ])/(\d+(?:\.\d+)?|[A-Za-zα-ωπθ])(?![\w/])')
+_GREEK_TEX = {'α': '\\alpha', 'β': '\\beta', 'γ': '\\gamma', 'θ': '\\theta', 'π': '\\pi', 'λ': '\\lambda',
+              'μ': '\\mu', 'σ': '\\sigma', 'ω': '\\omega', 'φ': '\\phi'}
+
+
+def _text_slash(m):
+    a, b = (_GREEK_TEX.get(v, v) for v in m.groups())
+    return '$\\frac{' + a + '}{' + b + '}$'
+
+
+def written_fractions(line):
+    """Turn every a/b on a text line into a fraction, in and outside $...$."""
+    if '/' not in line:
+        return line
+    parts, pos = [], 0
+    for m in SEG.finditer(line):
+        parts.append(_TEXT_SLASH.sub(_text_slash, line[pos:m.start()]))
+        parts.append('$' + slash_fractions(m.group(1)) + '$')
+        pos = m.end()
+    parts.append(_TEXT_SLASH.sub(_text_slash, line[pos:]))
+    return ''.join(parts)
+
+
 # ---------------------------------------------------------------- text
 
 SEG = re.compile(r'\$([^$]+)\$')
@@ -613,6 +1044,7 @@ def compose(db, text, width=40.0, line_gap=2.1, seed=None, jitter=1.0, color=INK
     x, base, maxx = 0.0, 1.0, 0.0
     starts = [0]  # index of the first stroke of every visual line
     for li, line in enumerate(text.split('\n')):
+        line = written_fractions(line)
         if li:
             x, base = 0.0, base + line_gap + rng.gauss(0, 0.03)
             starts.append(len(strokes))
